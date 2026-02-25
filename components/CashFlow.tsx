@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { CashRegisterSession, CashTransaction, Order, PaymentMethod } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
+import { supabase } from '../lib/supabase';
 import {
     ArrowUpCircle,
     ArrowDownCircle,
@@ -45,7 +46,7 @@ export const CashFlow: React.FC<CashFlowProps> = ({
     dailyHistory
 }) => {
     const { theme } = useTheme();
-    const { role } = useAuth();
+    const { role, user } = useAuth();
     const isDark = theme === 'dark';
     const isManager = role === 'owner' || role === 'gestor' || role === 'caixa' || !role; // Allow !role for dev/initial setup
 
@@ -59,6 +60,21 @@ export const CashFlow: React.FC<CashFlowProps> = ({
     const [amountInput, setAmountInput] = useState('');
     const [descriptionInput, setDescriptionInput] = useState('');
 
+    // --- Fix: Force List Update (User Logic: Dead List Fix) ---
+    // User requested structure: { id, hora, tipo, descricao, valor, responsavel }
+    interface MovimentacaoView {
+        id: string | number;
+        data_hora: string;
+        tipo: 'Sangria' | 'Suprimento';
+        descricao: string;
+        valor: number;
+        responsavel: string;
+    }
+
+    const [movimentacoes, setMovimentacoes] = useState<MovimentacaoView[]>([]);
+
+
+
     // --- Calculations ---
 
     // Helper to filter orders for a session
@@ -66,7 +82,7 @@ export const CashFlow: React.FC<CashFlowProps> = ({
         return orders.filter(o =>
             o.createdAt >= session.openedAt &&
             (session.closedAt ? o.createdAt <= session.closedAt : true) &&
-            o.status !== 'CANCELLED' && o.status !== 'ARCHIVED'
+            o.status !== 'CANCELLED'
         );
     };
 
@@ -75,6 +91,69 @@ export const CashFlow: React.FC<CashFlowProps> = ({
         : history.find(h => new Date(h.openedAt).toISOString().split('T')[0] === selectedHistoryDate);
 
     const activeOrders = activeSession ? getSessionOrders(activeSession) : [];
+
+    useEffect(() => {
+        const fetchMovimentacoes = async () => {
+            if (!activeSession) {
+                setMovimentacoes([]);
+                return;
+            }
+
+            try {
+                const { data, error } = await supabase
+                    .from('movimentacoes_caixa')
+                    .select('*')
+                    .eq('caixa_id', activeSession.id)
+                    .order('data_hora', { ascending: false });
+
+                if (error) {
+                    console.warn("Tabela movimentacoes_caixa não encontrada ou erro:", error);
+                    const mapped = [...(activeSession.transactions || [])]
+                        .sort((a, b) => b.timestamp - a.timestamp)
+                        .map(t => ({
+                            id: t.id,
+                            data_hora: new Date(t.timestamp).toISOString(),
+                            tipo: t.type === 'BLEED' ? 'Sangria' as const : 'Suprimento' as const,
+                            descricao: t.description,
+                            valor: t.amount,
+                            responsavel: t.userId || 'Gerente'
+                        }));
+                    setMovimentacoes(mapped);
+                    return;
+                }
+
+                if (data && data.length > 0) {
+                    const mapped = data.map((t: any) => ({
+                        id: t.id,
+                        data_hora: t.data_hora,
+                        tipo: t.tipo, // 'Sangria' | 'Suprimento'
+                        descricao: t.descricao,
+                        valor: t.valor,
+                        responsavel: t.responsavel || 'Operador'
+                    }));
+                    setMovimentacoes(mapped);
+                } else if (activeSession.transactions?.length > 0) {
+                    const mapped = [...activeSession.transactions]
+                        .sort((a, b) => b.timestamp - a.timestamp)
+                        .map(t => ({
+                            id: t.id,
+                            data_hora: new Date(t.timestamp).toISOString(),
+                            tipo: t.type === 'BLEED' ? 'Sangria' as const : 'Suprimento' as const,
+                            descricao: t.description,
+                            valor: t.amount,
+                            responsavel: t.userId || 'Gerente'
+                        }));
+                    setMovimentacoes(mapped);
+                } else {
+                    setMovimentacoes([]);
+                }
+            } catch (err) {
+                console.error("Erro geral no fetch de movimentacoes:", err);
+            }
+        };
+
+        fetchMovimentacoes();
+    }, [activeSession?.id]);
 
     // Totals
     const totalSales = activeOrders.reduce((sum, o) => sum + o.total, 0);
@@ -114,10 +193,45 @@ export const CashFlow: React.FC<CashFlowProps> = ({
         setShowCloseModal(false);
     };
 
-    const handleTransactionSubmit = (e: React.FormEvent) => {
+    const handleTransactionSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (showTransactionModal) {
-            onAddTransaction(showTransactionModal, parseFloat(amountInput), descriptionInput);
+        if (showTransactionModal && activeSession) {
+            const valor = parseFloat(amountInput);
+            const tipoTransacao = showTransactionModal;
+            const nomeTipo = tipoTransacao === 'BLEED' ? 'Sangria' : 'Suprimento';
+            const descricao = descriptionInput || nomeTipo;
+            const dataHoraAtual = new Date();
+            const responsavelId = user?.email || 'Operador';
+
+            // --- UI REATIVA INSTANTÂNEA ---
+            const novaMovimentacao: MovimentacaoView = {
+                id: Date.now().toString(),
+                data_hora: dataHoraAtual.toISOString(),
+                tipo: nomeTipo,
+                descricao: descricao,
+                valor: valor,
+                responsavel: responsavelId
+            };
+
+            // Injeta no topo da lista instantaneamente
+            setMovimentacoes(prevLista => [novaMovimentacao, ...prevLista]);
+
+            // Mantém update local herdado pro restante do App (Dashboard)
+            onAddTransaction(tipoTransacao, valor, descricao);
+
+            // --- INSERÇÃO NO SUPABASE (Auditoria Permanente) ---
+            try {
+                await supabase.from('movimentacoes_caixa').insert([{
+                    caixa_id: activeSession.id,
+                    tipo: nomeTipo,
+                    valor: valor,
+                    descricao: descricao,
+                    data_hora: dataHoraAtual.toISOString(),
+                    responsavel: responsavelId
+                }]);
+            } catch (error) {
+                console.error("Erro Silencioso no Supabase:", error);
+            }
         }
         setAmountInput('');
         setDescriptionInput('');
@@ -364,63 +478,67 @@ export const CashFlow: React.FC<CashFlowProps> = ({
                     </div>
 
                     {/* Transaction History List */}
-                    <div className={`rounded-2xl border overflow-hidden ${isDark ? 'bg-[#1E1E24] border-white/5' : 'bg-white border-slate-100 shadow-sm'}`}>
+                    {/* Transaction History List */}
+                    <div className={`rounded-2xl border overflow-hidden mt-6 ${isDark ? 'bg-[#1E1E24] border-white/5' : 'bg-white border-slate-100 shadow-sm'}`}>
                         <div className={`p-6 border-b ${isDark ? 'border-white/5' : 'border-slate-100'}`}>
                             <h3 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-800'}`}>Movimentações Detalhadas</h3>
                         </div>
-                        <div className="overflow-x-auto max-h-[400px] overflow-y-auto custom-scrollbar">
+                        <div className="w-full min-h-[300px] max-h-[500px] overflow-y-auto mt-4 custom-scrollbar">
                             <table className="w-full text-sm">
-                                <thead className={`text-left font-bold uppercase tracking-wider ${isDark ? 'bg-white/5 text-slate-400' : 'bg-slate-50 text-slate-500'}`}>
+                                <thead className={`text-left font-bold uppercase tracking-wider ${isDark ? 'bg-white/5 text-slate-400' : 'bg-slate-50 text-slate-500'} sticky top-0 z-10`}>
                                     <tr>
-                                        <th className="p-4">Hora</th>
-                                        <th className="p-4">Tipo</th>
-                                        <th className="p-4">Descrição</th>
-                                        <th className="p-4 text-right">Valor</th>
-                                        <th className="p-4">Resp.</th>
+                                        <th className="py-3 px-4">Hora</th>
+                                        <th className="py-3 px-4">Tipo</th>
+                                        <th className="py-3 px-4">Descrição</th>
+                                        <th className="py-3 px-4 text-right">Valor</th>
+                                        <th className="py-3 px-4">Resp.</th>
                                     </tr>
                                 </thead>
                                 <tbody className={`divide-y ${isDark ? 'divide-white/5' : 'divide-slate-100'}`}>
-                                    {/* Combine Orders and Transactions */}
-                                    {activeSession.transactions.map((t) => (
-                                        <tr key={t.id} className={isDark ? 'hover:bg-white/5' : 'hover:bg-slate-50'}>
-                                            <td className={`p-4 font-mono ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{new Date(t.timestamp).toLocaleTimeString()}</td>
-                                            <td className="p-4">
-                                                <span className={`px-2 py-1 rounded text-xs font-bold ${t.type === 'BLEED' ? 'bg-red-500/10 text-red-500' : 'bg-indigo-500/10 text-indigo-500'
-                                                    }`}>
-                                                    {t.type === 'BLEED' ? 'SANGRIA' : 'SUPRIMENTO'}
-                                                </span>
-                                            </td>
-                                            <td className={`p-4 ${isDark ? 'text-white' : 'text-slate-800'}`}>{t.description}</td>
-                                            <td className={`p-4 text-right font-bold ${t.type === 'BLEED' ? 'text-red-500' : 'text-indigo-500'}`}>
-                                                {t.type === 'BLEED' ? '-' : '+'} R$ {t.amount.toFixed(2)}
-                                            </td>
-                                            <td className={`p-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Gerente</td>
+                                    {movimentacoes.length > 0 || activeOrders.length > 0 ? (
+                                        <>
+                                            {movimentacoes.map((item) => (
+                                                <tr key={item.id} className={isDark ? 'hover:bg-white/5' : 'hover:bg-slate-50'}>
+                                                    <td className={`py-3 px-4 font-mono ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                                                        {new Date(item.data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                                    </td>
+                                                    <td className="py-3 px-4">
+                                                        <span className={`px-2 py-1 rounded text-xs font-bold ${item.tipo === 'Sangria' ? 'bg-red-500/10 text-red-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+                                                            {item.tipo}
+                                                        </span>
+                                                    </td>
+                                                    <td className={`py-3 px-4 ${isDark ? 'text-white' : 'text-slate-800'}`}>{item.descricao}</td>
+                                                    <td className={`py-3 px-4 text-right font-bold ${item.tipo === 'Sangria' ? 'text-red-500' : 'text-emerald-500'}`}>
+                                                        {item.tipo === 'Sangria' ? '-' : '+'} R$ {item.valor.toFixed(2)}
+                                                    </td>
+                                                    <td className={`py-3 px-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{item.responsavel}</td>
+                                                </tr>
+                                            ))}
+                                            {activeOrders.map(o => (
+                                                <tr key={o.id} className={isDark ? 'hover:bg-white/5' : 'hover:bg-slate-50'}>
+                                                    <td className={`py-3 px-4 font-mono ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{new Date(o.createdAt).toLocaleTimeString()}</td>
+                                                    <td className="py-3 px-4">
+                                                        <span className="px-2 py-1 rounded text-xs font-bold bg-emerald-500/10 text-emerald-500">
+                                                            VENDA #{o.displayId}
+                                                        </span>
+                                                    </td>
+                                                    <td className={`py-3 px-4 ${isDark ? 'text-white' : 'text-slate-800'}`}>
+                                                        Pagamento em {o.paymentMethod}
+                                                    </td>
+                                                    <td className="py-3 px-4 text-right font-bold text-emerald-500">
+                                                        + R$ {o.total.toFixed(2)}
+                                                    </td>
+                                                    <td className={`py-3 px-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Caixa</td>
+                                                </tr>
+                                            ))}
+                                        </>
+                                    ) : (
+                                        <tr>
+                                            <td colSpan={5} className="py-8 text-center text-slate-500">Nenhuma movimentação registrada hoje.</td>
                                         </tr>
-                                    ))}
-
-                                    {/* Orders */}
-                                    {activeOrders.map(o => (
-                                        <tr key={o.id} className={isDark ? 'hover:bg-white/5' : 'hover:bg-slate-50'}>
-                                            <td className={`p-4 font-mono ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{new Date(o.createdAt).toLocaleTimeString()}</td>
-                                            <td className="p-4">
-                                                <span className="px-2 py-1 rounded text-xs font-bold bg-emerald-500/10 text-emerald-500">
-                                                    VENDA #{o.displayId}
-                                                </span>
-                                            </td>
-                                            <td className={`p-4 ${isDark ? 'text-white' : 'text-slate-800'}`}>
-                                                Pagamento em {o.paymentMethod}
-                                            </td>
-                                            <td className="p-4 text-right font-bold text-emerald-500">
-                                                + R$ {o.total.toFixed(2)}
-                                            </td>
-                                            <td className={`p-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Caixa</td>
-                                        </tr>
-                                    ))}
+                                    )}
                                 </tbody>
                             </table>
-                            {activeOrders.length === 0 && activeSession.transactions.length === 0 && (
-                                <div className="p-8 text-center text-slate-500">Nenhuma movimentação registrada.</div>
-                            )}
                         </div>
                     </div>
                 </>

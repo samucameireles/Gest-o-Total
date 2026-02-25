@@ -4,8 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { Store, Plus, ArrowRight, LogOut, Loader2, Sun, Moon } from 'lucide-react';
-import logoWhite from '../fotos/gestaototalwhite.png';
-import logoDark from '../fotos/gestaototaldark.png';
+
 
 interface Tenant {
     id: string;
@@ -107,7 +106,7 @@ export default function UnitSelection() {
                 <div className="flex flex-col items-center mb-16 text-center">
                     <div className="inline-flex items-center justify-center w-full max-w-[400px] h-32 mb-8 transition-all duration-500">
                         <img
-                            src={isDark ? logoDark : logoWhite}
+                            src={isDark ? '/fotos/gestaototaldark.png' : '/fotos/gestaototalwhite.png'}
                             alt="GestãoTotal Logo"
                             className="w-full h-full object-contain"
                         />
@@ -244,6 +243,6 @@ export default function UnitSelection() {
                     </div>
                 )}
             </div>
-        </div>
+        </div >
     );
 }

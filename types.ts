@@ -1,4 +1,4 @@
-export type Category = 'BURGER' | 'SIDE' | 'DRINK' | 'DESSERT';
+export type Category = string;
 
 export interface Unit {
   id: string;
@@ -89,6 +89,8 @@ export interface Order {
   assignedDriverId?: string;
   customerName?: string;
   tableName?: string;
+  receivedAmount?: number;
+  changeAmount?: number;
 }
 
 export interface Driver {

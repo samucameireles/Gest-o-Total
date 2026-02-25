@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, Plus, Minus, Trash2, CreditCard, Banknote, Smartphone, CheckCircle, ShoppingCart, X, ShoppingBag, MapPin, Store, ChefHat, UserSearch, UserPlus, Tag } from 'lucide-react';
 import { Product, CartItem, Category, PaymentMethod, OrderType, Ingredient, DeliveryDetails, Customer, Order, Coupon, AddOn } from '../types';
 import { RECIPES } from '../constants';
+import { supabase } from '../lib/supabase';
+import { useTheme } from '../contexts/ThemeContext';
 
 interface POSProps {
   products: Product[];
-  onPlaceOrder: (items: CartItem[], type: OrderType, payment: PaymentMethod, deliveryDetails?: DeliveryDetails, dineInName?: string, tableName?: string, sendToKitchenOnly?: boolean) => void;
-  onPayOrder: (orderId: string, payment: PaymentMethod, discount: number) => void;
+  onPlaceOrder: (items: CartItem[], type: OrderType, payment: PaymentMethod, deliveryDetails?: DeliveryDetails, dineInName?: string, tableName?: string, sendToKitchenOnly?: boolean, receivedAmount?: number, changeAmount?: number) => void;
+  onPayOrder: (orderId: string, payment: PaymentMethod, discount: number, receivedAmount?: number, changeAmount?: number) => void;
   inventory: Ingredient[];
   customers: Customer[];
   onAddCustomer: (c: Omit<Customer, 'id'>) => void;
@@ -16,6 +18,8 @@ interface POSProps {
 }
 
 export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, inventory, customers, onAddCustomer, activeOrders, coupons, addOns }) => {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const [activeCategory, setActiveCategory] = useState<Category | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -51,14 +55,84 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
   // Coupon
   const [couponCode, setCouponCode] = useState('');
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
+  const [receivedAmountStr, setReceivedAmountStr] = useState<string>('');
 
-  const categories: { id: Category | 'ALL', label: string }[] = [
-    { id: 'ALL', label: 'Tudo' },
-    { id: 'BURGER', label: 'Burgers' },
-    { id: 'SIDE', label: 'Acomp.' },
-    { id: 'DRINK', label: 'Bebidas' },
-    { id: 'DESSERT', label: 'Doces' },
-  ];
+  // Dynamic Categories V14
+  const [categorias, setCategorias] = useState<{ id: string, label: string }[]>([]);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [editingCatId, setEditingCatId] = useState<string | null>(null);
+  const [editingCatName, setEditingCatName] = useState('');
+
+  useEffect(() => {
+    fetchCategorias();
+  }, []);
+
+  const fetchCategorias = async () => {
+    try {
+      const { data, error } = await supabase.from('categorias').select('*').order('nome');
+      if (data) {
+        setCategorias(data.map(c => ({ id: c.nome, label: c.nome })));
+      } else {
+        // Fallback for visual testing if table is empty or missing
+        setCategorias([
+          { id: 'BURGER', label: 'Burgers' },
+          { id: 'SIDE', label: 'Acomp.' },
+          { id: 'DRINK', label: 'Bebidas' },
+          { id: 'DESSERT', label: 'Doces' },
+        ]);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const currentCategories = [{ id: 'ALL', label: 'Tudo' }, ...categorias];
+
+  const handleAddCategory = async () => {
+    if (!newCatName.trim()) return;
+    try {
+      const { error } = await supabase.from('categorias').insert([{ nome: newCatName.trim() }]);
+      if (error) {
+        // Silently fallback to local state if table doesn't exist
+        setCategorias(prev => [...prev, { id: newCatName.trim(), label: newCatName.trim() }]);
+      } else {
+        fetchCategorias();
+      }
+      setNewCatName('');
+    } catch (err) { }
+  };
+
+  const handleUpdateCategory = async (oldName: string) => {
+    if (!editingCatName.trim() || oldName === editingCatName.trim()) {
+      setEditingCatId(null);
+      return;
+    }
+    try {
+      const { error } = await supabase.from('categorias').update({ nome: editingCatName.trim() }).eq('nome', oldName);
+      if (error) {
+        setCategorias(prev => prev.map(c => c.id === oldName ? { id: editingCatName.trim(), label: editingCatName.trim() } : c));
+      } else {
+        fetchCategorias();
+      }
+    } catch (err) { }
+    setEditingCatId(null);
+  };
+
+  const handleDeleteCategory = async (idName: string) => {
+    try {
+      const { error } = await supabase.from('categorias').delete().eq('nome', idName);
+
+      if (error) {
+        alert("Não é possível excluir. Existem produtos usando esta categoria.");
+        return;
+      }
+
+      setCategorias((prev) => prev.filter(c => c.id !== idName));
+    } catch (err) {
+      alert("Não é possível excluir. Ocorreu um erro no servidor.");
+    }
+  };
 
   // Logic to identify missing ingredients
   const checkStockStatus = (product: Product): { available: boolean, missingItem?: string } => {
@@ -215,9 +289,18 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
   };
 
   const processOrder = (sendToKitchenOnly: boolean) => {
+    const parsedReceived = parseFloat(receivedAmountStr) || 0;
+    const changeAmount = paymentMethod === 'CASH' ? Math.max(0, parsedReceived - finalTotal) : 0;
+    const isCashValid = paymentMethod !== 'CASH' || parsedReceived >= finalTotal;
+
+    if (!sendToKitchenOnly && !isCashValid) {
+      alert("Valor recebido é menor que o total do pedido!");
+      return;
+    }
+
     if (selectedTabToPay) {
-      onPayOrder(selectedTabToPay.id, paymentMethod, discountAmount);
-      setSelectedTabToPay(null); setShowCheckout(false); setAppliedCoupon(null); setCouponCode('');
+      onPayOrder(selectedTabToPay.id, paymentMethod, discountAmount, paymentMethod === 'CASH' ? parsedReceived : undefined, paymentMethod === 'CASH' ? changeAmount : undefined);
+      setSelectedTabToPay(null); setShowCheckout(false); setAppliedCoupon(null); setCouponCode(''); setReceivedAmountStr('');
       return;
     }
     if (cart.length === 0) return;
@@ -247,11 +330,13 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
       orderType === 'DELIVERY' ? deliveryForm : undefined,
       orderType === 'DINE_IN' ? dineInName : undefined,
       undefined,
-      sendToKitchenOnly
+      sendToKitchenOnly,
+      paymentMethod === 'CASH' && !sendToKitchenOnly ? parsedReceived : undefined,
+      paymentMethod === 'CASH' && !sendToKitchenOnly ? changeAmount : undefined
     );
 
     // Reset
-    setCart([]); setShowCheckout(false); setAppliedCoupon(null); setCouponCode('');
+    setCart([]); setShowCheckout(false); setAppliedCoupon(null); setCouponCode(''); setReceivedAmountStr('');
     setDeliveryForm({ customerName: '', phone: '', street: '', number: '', neighborhood: '' });
     setDineInName(''); setSelectedCustomer(null); setCustomerSearch('');
   };
@@ -269,10 +354,27 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
             <input type="text" placeholder="Buscar..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-white border border-border pl-10 pr-4 py-2.5 rounded-xl shadow-sm outline-none focus:border-accent" />
           </div>
         </div>
-        <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
-          {categories.map(cat => (
-            <button key={cat.id} onClick={() => setActiveCategory(cat.id)} className={`px-5 py-2.5 rounded-full text-sm font-bold transition-all shadow-sm ${activeCategory === cat.id ? 'bg-textPrimary text-white' : 'bg-white text-textSecondary border border-border'}`}>{cat.label}</button>
+        <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar items-center">
+          {currentCategories.map(cat => (
+            <button
+              key={cat.id}
+              onClick={() => setActiveCategory(cat.id as Category | 'ALL')}
+              className={`px-4 py-2 rounded-xl whitespace-nowrap font-bold transition-all ${activeCategory === cat.id
+                ? 'bg-accent text-white shadow-lg shadow-accent/30'
+                : `border ${isDark ? 'bg-[#1E1E24] border-white/5 text-slate-300 hover:bg-white/5' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`
+                }`}
+            >
+              {cat.label}
+            </button>
           ))}
+
+          <button
+            onClick={() => setShowCategoryModal(true)}
+            className={`p-2 rounded-xl font-bold transition-all flex items-center justify-center min-w-[40px] border border-dashed ${isDark ? 'border-white/20 text-slate-300 hover:bg-white/5 hover:border-accent hover:text-accent' : 'border-slate-300 text-slate-500 hover:bg-slate-50 hover:border-accent hover:text-accent'}`}
+            title="Gerenciar Categorias"
+          >
+            <Plus size={20} />
+          </button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 overflow-y-auto pr-2 pb-24">
           {filteredProducts.map(product => {
@@ -447,6 +549,29 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
                 ))}
               </div>
 
+              {paymentMethod === 'CASH' && (
+                <div className="bg-green-50 rounded-xl border border-green-200 p-4 space-y-2 animate-in fade-in">
+                  <label className="text-sm font-bold text-green-800 block">Valor Recebido do Cliente (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    autoFocus
+                    placeholder="0.00"
+                    value={receivedAmountStr}
+                    onChange={(e) => setReceivedAmountStr(e.target.value)}
+                    className="w-full bg-white border border-green-200 rounded p-3 text-lg font-bold outline-none focus:border-green-500"
+                  />
+                  {receivedAmountStr && (
+                    <div className="pt-2 border-t border-green-200 mt-2 flex justify-between items-center">
+                      <span className="font-bold text-green-800">Troco:</span>
+                      <span className="font-extrabold text-green-700 text-lg">
+                        R$ {Math.max(0, (parseFloat(receivedAmountStr) || 0) - finalTotal).toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="flex gap-2">
                 <input className="flex-1 bg-background border border-border rounded-lg p-2 text-xs outline-none focus:border-accent uppercase" placeholder="CUPOM" value={couponCode} onChange={e => setCouponCode(e.target.value)} disabled={!!appliedCoupon} />
                 {appliedCoupon ? (
@@ -472,13 +597,25 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
                   ) : (
                     <div className="flex gap-2">
                       <button onClick={() => setShowCheckout(false)} className="flex-1 bg-white border border-border font-bold rounded-xl text-sm">Voltar</button>
-                      <button onClick={() => processOrder(false)} className="flex-[3] bg-success hover:bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2"><CheckCircle size={18} /> Finalizar Pedido</button>
+                      <button
+                        onClick={() => processOrder(false)}
+                        disabled={paymentMethod === 'CASH' && (parseFloat(receivedAmountStr) || 0) < finalTotal}
+                        className="flex-[3] bg-success hover:bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <CheckCircle size={18} /> Finalizar Pedido
+                      </button>
                     </div>
                   )
                 ) : (
                   <div className="flex gap-2">
                     <button onClick={() => { setShowCheckout(false); setSelectedTabToPay(null); }} className="flex-1 bg-white border border-border font-bold rounded-xl text-sm">Voltar</button>
-                    <button onClick={() => processOrder(false)} className="flex-[3] bg-success hover:bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2"><CheckCircle size={18} /> Receber Pagamento</button>
+                    <button
+                      onClick={() => processOrder(false)}
+                      disabled={paymentMethod === 'CASH' && (parseFloat(receivedAmountStr) || 0) < finalTotal}
+                      className="flex-[3] bg-success hover:bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <CheckCircle size={18} /> Receber Pagamento
+                    </button>
                   </div>
                 )}
               </div>
@@ -535,6 +672,120 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
           </div>
         </div>
       )}
+      {/* Category Management Modal V14 */}
+      {showCategoryModal && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+          <div className={`${isDark ? 'bg-[#1E1E24] border border-white/10' : 'bg-white'} rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col max-h-[90vh]`}>
+            {/* Header */}
+            <div className={`p-6 border-b ${isDark ? 'border-white/10' : 'border-slate-100'} flex justify-between items-center bg-gradient-to-r ${isDark ? 'from-accent/20 to-transparent' : 'from-accent/10 to-transparent'}`}>
+              <div>
+                <h3 className={`text-2xl font-black ${isDark ? 'text-white' : 'text-slate-800'}`}>Gerenciar Categorias</h3>
+                <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Crie e edite as categorias do cardápio</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowCategoryModal(false);
+                  setEditingCatId(null);
+                }}
+                className={`p-2 rounded-full ${isDark ? 'hover:bg-white/10 text-slate-400' : 'hover:bg-slate-100 text-slate-500'} transition-colors`}
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
+
+              {/* Add New Category */}
+              <div className="flex gap-2 mb-8">
+                <input
+                  type="text"
+                  placeholder="Nome da nova categoria"
+                  value={newCatName}
+                  onChange={(e) => setNewCatName(e.target.value)}
+                  className={`flex-1 px-4 py-3 rounded-xl border font-medium outline-none transition-all ${isDark
+                    ? 'bg-[#2A2A35] border-white/5 text-white focus:border-accent focus:bg-[#32323E]'
+                    : 'bg-slate-50 border-slate-200 text-slate-800 focus:border-accent focus:bg-white'
+                    }`}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleAddCategory();
+                  }}
+                />
+                <button
+                  onClick={handleAddCategory}
+                  disabled={!newCatName.trim()}
+                  className="bg-accent text-white px-5 rounded-xl font-bold flex items-center gap-2 hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Plus size={20} />
+                </button>
+              </div>
+
+              {/* List existing */}
+              <div className="space-y-3">
+                <h4 className={`font-bold text-sm uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-400'} mb-4`}>
+                  Categorias Existentes
+                </h4>
+
+                {categorias.map(cat => (
+                  <div key={cat.id} className={`flex items-center justify-between p-3 rounded-xl border ${isDark ? 'bg-[#2A2A35] border-white/5' : 'bg-white border-slate-100'}`}>
+                    {editingCatId === cat.id ? (
+                      <div className="flex gap-2 w-full">
+                        <input
+                          type="text"
+                          value={editingCatName}
+                          onChange={(e) => setEditingCatName(e.target.value)}
+                          className={`flex-1 px-3 py-2 rounded-lg border font-medium outline-none ${isDark ? 'bg-[#1E1E24] border-white/10 text-white focus:border-accent' : 'bg-slate-50 border-slate-200 text-slate-800 focus:border-accent'
+                            }`}
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleUpdateCategory(cat.id);
+                            if (e.key === 'Escape') setEditingCatId(null);
+                          }}
+                        />
+                        <button
+                          onClick={() => handleUpdateCategory(cat.id)}
+                          className="p-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors"
+                        >
+                          <CheckCircle size={20} />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <span className={`font-bold ${isDark ? 'text-white' : 'text-slate-700'}`}>{cat.label}</span>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              setEditingCatId(cat.id);
+                              setEditingCatName(cat.label);
+                            }}
+                            className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-white/10 text-slate-400 hover:text-white' : 'hover:bg-slate-100 text-slate-500 hover:text-slate-800'}`}
+                            title="Editar Categoria"
+                          >
+                            <Tag size={18} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteCategory(cat.id)}
+                            className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-red-500/10 text-red-400 hover:text-red-300' : 'hover:bg-red-50 text-red-500 hover:text-red-600'}`}
+                            title="Excluir Categoria"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+                {categorias.length === 0 && (
+                  <div className={`text-center py-6 text-sm ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                    Nenhuma categoria personalizada criada.<br />Use o campo acima para criar a primeira!
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

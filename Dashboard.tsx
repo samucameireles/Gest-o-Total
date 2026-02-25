@@ -228,8 +228,7 @@ export default function Dashboard() {
         // Calculate Totals Snapshot
         const sessionOrders = orders.filter(o =>
             o.createdAt >= activeSession.openedAt &&
-            o.status !== 'CANCELLED' &&
-            o.status !== 'ARCHIVED'
+            o.status !== 'CANCELLED'
         );
 
         const totalSales = sessionOrders.reduce((sum, o) => sum + o.total, 0);
@@ -290,10 +289,10 @@ export default function Dashboard() {
         }));
     };
 
-    const handlePlaceOrder = (items: CartItem[], type: OrderType, paymentMethod: PaymentMethod, deliveryDetails?: DeliveryDetails, dineInName?: string, tableName?: string) => {
+    const handlePlaceOrder = (items: CartItem[], type: OrderType, paymentMethod: PaymentMethod, deliveryDetails?: DeliveryDetails, dineInName?: string, tableName?: string, sendToKitchenOnly?: boolean, receivedAmount?: number, changeAmount?: number) => {
         // Block if cash is closed
         if (!activeSession) {
-            alert('Ocaixa está FECHADO. Abra o caixa antes de realizar vendas.');
+            alert('O caixa está FECHADO. Abra o caixa antes de realizar vendas.');
             return;
         }
 
@@ -321,7 +320,9 @@ export default function Dashboard() {
             deliveryDetails,
             customerName: type === 'DELIVERY' ? deliveryDetails?.customerName : dineInName,
             tableName,
-            createdAt: Date.now()
+            createdAt: Date.now(),
+            receivedAmount,
+            changeAmount
         };
 
         setOrders(prev => [newOrder, ...prev]);
@@ -359,7 +360,7 @@ export default function Dashboard() {
         }
     };
 
-    const handlePayOrder = (orderId: string, paymentMethod: PaymentMethod, discount: number) => {
+    const handlePayOrder = (orderId: string, paymentMethod: PaymentMethod, discount: number, receivedAmount?: number, changeAmount?: number) => {
         if (!activeSession) {
             alert('O caixa está FECHADO. Abra o caixa para receber pagamentos.');
             return;
@@ -371,7 +372,9 @@ export default function Dashboard() {
                     isPaid: true,
                     paymentMethod,
                     discount,
-                    total: o.total - discount
+                    total: o.total - discount,
+                    receivedAmount,
+                    changeAmount
                 };
             }
             return o;
@@ -428,10 +431,26 @@ export default function Dashboard() {
     };
     const handleRemoveFee = (id: string) => setNeighborhoodFees(prev => prev.filter(f => f.id !== id));
     const handleAddIngredient = (name: string, unit: string) => setInventory(prev => [...prev, { id: Math.random().toString(), name, unit, currentStock: 0, minThreshold: 5 }]);
-    const handleRemoveIngredient = (id: string) => setInventory(prev => prev.filter(i => i.id !== id));
+    const handleRemoveIngredient = (id: string) => {
+        setInventory(prev => prev.filter(i => i.id !== id));
+        // Cascade delete ingredient from all product recipes
+        setProducts(prev => prev.map(p => {
+            let currentRecipe = p.recipe || [];
+            if (currentRecipe.length === 0 && RECIPES[p.id]) {
+                currentRecipe = [...RECIPES[p.id]];
+            }
+            const updatedRecipe = currentRecipe.filter(r => r.ingredientId !== id);
+
+            // If the recipe didn't actually change, simply return the product as is
+            if (updatedRecipe.length === currentRecipe.length && p.recipe) return p;
+
+            return { ...p, recipe: updatedRecipe };
+        }));
+    };
 
     const handleAddProduct = (prod: Omit<Product, 'id'>) => setProducts(prev => [...prev, { ...prod, id: Math.random().toString() }]);
     const handleRemoveProduct = (id: string) => setProducts(prev => prev.filter(p => p.id !== id));
+    const handleUpdateProduct = (id: string, updatedFields: Partial<Product>) => setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updatedFields } : p));
 
     const handleAddCustomer = (c: Omit<Customer, 'id'>) => setCustomers(prev => [...prev, { ...c, id: Math.random().toString() }]);
     const handleRemoveCustomer = (id: string) => setCustomers(prev => prev.filter(c => c.id !== id));
@@ -567,7 +586,7 @@ export default function Dashboard() {
             case 'motoboys':
                 return <Motoboys drivers={drivers} onAddDriver={handleAddDriver} onRemoveDriver={handleRemoveDriver} neighborhoodFees={neighborhoodFees} onUpdateFee={handleUpdateFee} onRemoveFee={handleRemoveFee} orders={orders} dailyHistory={dailyHistory} />;
             case 'inventory':
-                return <Inventory inventory={inventory} onUpdateStock={handleUpdateStock} onUpdateIngredientName={handleUpdateIngredientName} onAddIngredient={handleAddIngredient} onRemoveIngredient={handleRemoveIngredient} onAddProduct={handleAddProduct} onRemoveProduct={handleRemoveProduct} products={products} onLogWaste={handleLogWaste} wasteLogs={wasteLogs} addOns={addOns} onAddAddOn={handleAddAddOn} onRemoveAddOn={handleRemoveAddOn} />;
+                return <Inventory inventory={inventory} onUpdateStock={handleUpdateStock} onUpdateIngredientName={handleUpdateIngredientName} onAddIngredient={handleAddIngredient} onRemoveIngredient={handleRemoveIngredient} onAddProduct={handleAddProduct} onRemoveProduct={handleRemoveProduct} onUpdateProduct={handleUpdateProduct} products={products} onLogWaste={handleLogWaste} wasteLogs={wasteLogs} addOns={addOns} onAddAddOn={handleAddAddOn} onRemoveAddOn={handleRemoveAddOn} />;
             case 'crm':
                 return <CRM customers={customers} onAddCustomer={handleAddCustomer} onRemoveCustomer={handleRemoveCustomer} />;
             case 'reports':

@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { Link, useNavigate } from 'react-router-dom';
 import { ChefHat, Lock, Mail, Loader2, Sun, Moon, Eye, EyeOff } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
-import logo from '../../fotos/gestaototal.png';
+const logo = '/fotos/gestaototal.png';
 
 export default function Login() {
     const [email, setEmail] = useState('');
