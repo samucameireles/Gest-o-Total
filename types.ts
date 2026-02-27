@@ -116,6 +116,17 @@ export interface StoreSettings {
   logoUrl: string;
   logoPath?: string;
   themeColor?: string;
+  address?: string;
+  googleMapsUrl?: string;
+  operatingHours?: {
+    monday: string;
+    tuesday: string;
+    wednesday: string;
+    thursday: string;
+    friday: string;
+    saturday: string;
+    sunday: string;
+  };
   menu?: {
     openingTime: string;
     closingTime: string;

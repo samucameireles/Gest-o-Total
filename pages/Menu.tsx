@@ -26,6 +26,9 @@ import {
   Gift,
   Copy,
   LayoutGrid,
+  Store,
+  Sun,
+  ChevronRight,
 } from "lucide-react";
 import { AddOn } from "../types";
 
@@ -62,6 +65,17 @@ interface TenantInfo {
       forceClose?: boolean;
       minimumOrder: number;
       estimatedDeliveryTime: string;
+    };
+    address?: string;
+    googleMapsUrl?: string;
+    operatingHours?: {
+      monday: string;
+      tuesday: string;
+      wednesday: string;
+      thursday: string;
+      friday: string;
+      saturday: string;
+      sunday: string;
     };
   };
   online_menu_enabled: boolean;
@@ -121,6 +135,7 @@ export default function Menu() {
   const [showCart, setShowCart] = useState(false);
   const [showCheckout, setShowCheckout] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<
@@ -660,7 +675,10 @@ export default function Menu() {
             <span className={`w-1.5 h-1.5 rounded-full ${isStoreOpen ? 'bg-emerald-400' : 'bg-red-400'}`}></span>
             {menuConfig?.openingTime ? `Abre às ${menuConfig.openingTime}` : ''} {minimumOrder > 0 ? `• Mínimo R$ ${minimumOrder.toFixed(2).replace('.', ',')}` : '• Sem mínimo'} • {estimatedDeliveryTime}
           </div>
-          <button className="text-xs text-slate-300 hover:text-white transition-colors">
+          <button
+            onClick={() => setShowProfileModal(true)}
+            className="text-xs text-slate-300 hover:text-white transition-colors"
+          >
             Perfil da loja
           </button>
         </div>
@@ -1648,6 +1666,98 @@ export default function Menu() {
           </div>
         )
       }
+
+      {/* Profile Modal */}
+      {showProfileModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                <Store size={20} className="text-theme" /> {tenant.name}
+              </h2>
+              <button
+                onClick={() => setShowProfileModal(false)}
+                className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-200 text-slate-500 hover:bg-slate-300 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+              {/* Operating Hours */}
+              <div className="space-y-3">
+                <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
+                  <Sun size={16} className="text-orange-500" /> Horário de Funcionamento
+                </h3>
+
+                {tenant.settings?.operatingHours ? (
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl divide-y divide-slate-100">
+                    {[
+                      { key: 'monday', label: 'Segunda-feira' },
+                      { key: 'tuesday', label: 'Terça-feira' },
+                      { key: 'wednesday', label: 'Quarta-feira' },
+                      { key: 'thursday', label: 'Quinta-feira' },
+                      { key: 'friday', label: 'Sexta-feira' },
+                      { key: 'saturday', label: 'Sábado' },
+                      { key: 'sunday', label: 'Domingo' }
+                    ].map(day => {
+                      const value = (tenant.settings?.operatingHours as any)?.[day.key];
+                      if (!value) return null;
+                      return (
+                        <div key={day.key} className="flex justify-between items-center p-3 text-sm">
+                          <span className="text-slate-500 font-medium">{day.label}</span>
+                          <span className="text-slate-800 font-bold">{value}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  tenant.settings?.menu?.openingTime && tenant.settings?.menu?.closingTime && (
+                    <p className="text-slate-600 text-sm font-medium">
+                      Todos os dias: {tenant.settings.menu.openingTime} às {tenant.settings.menu.closingTime}
+                    </p>
+                  )
+                )}
+              </div>
+
+              {/* Address */}
+              {tenant.settings?.address && (
+                <div className="space-y-3 pt-2">
+                  <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
+                    <MapPin size={16} className="text-emerald-500" /> Endereço
+                  </h3>
+
+                  <div
+                    className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col gap-4 group transition-colors hover:bg-slate-100"
+                  >
+                    <div
+                      className="flex items-center justify-between cursor-pointer w-full"
+                      onClick={() => tenant.settings?.address && window.open(`https://maps.google.com/?q=${encodeURIComponent(tenant.settings.address)}`, '_blank')}
+                    >
+                      <p className="text-slate-600 text-sm leading-relaxed pr-4 font-medium">
+                        {tenant.settings.address}
+                      </p>
+                      <ChevronRight size={18} className="text-slate-400 group-hover:text-theme transition-colors flex-shrink-0" />
+                    </div>
+
+                    {/* Google Maps Embed via Datamap iframe */}
+                    <div className="w-full rounded-xl overflow-hidden shadow-sm">
+                      <iframe
+                        width="100%"
+                        height="200"
+                        frameBorder="0"
+                        scrolling="no"
+                        marginHeight={0}
+                        marginWidth={0}
+                        src={`https://maps.google.com/maps?width=100%25&height=200&hl=pt-BR&q=${encodeURIComponent(tenant.settings.address)}&t=&z=15&ie=UTF8&iwloc=B&output=embed`}
+                      ></iframe>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Added style to hide scrollbar for horizontal lists */}
       <style

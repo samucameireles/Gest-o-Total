@@ -32,7 +32,13 @@ export default function Dashboard() {
                 logo_url: s.logoUrl,
                 logo_path: s.logoPath,
                 theme_color: s.themeColor,
-                settings: { ...s.menu ? { menu: s.menu } : {}, logoUrl: s.logoUrl }
+                settings: {
+                    ...(s.menu ? { menu: s.menu } : {}),
+                    logoUrl: s.logoUrl,
+                    address: s.address,
+                    googleMapsUrl: s.googleMapsUrl,
+                    operatingHours: s.operatingHours
+                }
             }).eq('id', selectedUnit.id);
             if (error) throw error;
             setStoreSettings(s);
@@ -203,7 +209,10 @@ export default function Dashboard() {
                             logoUrl: tenantInfo.logo_url || tenantInfo.settings?.logoUrl || '',
                             logoPath: tenantInfo.logo_path || '',
                             themeColor: tenantInfo.theme_color || '#f97316',
-                            menu: tenantInfo.settings?.menu
+                            menu: tenantInfo.settings?.menu,
+                            address: tenantInfo.settings?.address,
+                            googleMapsUrl: tenantInfo.settings?.googleMapsUrl,
+                            operatingHours: tenantInfo.settings?.operatingHours
                         });
                     }
 
