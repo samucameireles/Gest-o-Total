@@ -11,9 +11,10 @@ interface MotoboysProps {
   onRemoveFee: (id: string) => void;
   orders: Order[]; // Received from Dashboard (Active Orders)
   dailyHistory: DailyHistory[];
+  onFetchOrderDetails?: (displayId: number) => Promise<Order | null>;
 }
 
-export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemoveDriver, neighborhoodFees, onUpdateFee, onRemoveFee, orders, dailyHistory }) => {
+export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemoveDriver, neighborhoodFees, onUpdateFee, onRemoveFee, orders, dailyHistory, onFetchOrderDetails }) => {
   const [newDriverName, setNewDriverName] = useState('');
   const [newNeighborhood, setNewNeighborhood] = useState('');
   const [newFeePrice, setNewFeePrice] = useState('');
@@ -22,6 +23,16 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
   // V10: History View
   const [viewMode, setViewMode] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toLocaleDateString('pt-BR').split('/').reverse().join('-')); // YYYY-MM-DD
+
+  React.useEffect(() => {
+    if (dailyHistory.length > 0) {
+      const today = new Date().toLocaleDateString('pt-BR').split('/').reverse().join('-');
+      const hasToday = dailyHistory.find(h => h.id === today);
+      if (!hasToday && selectedDate === today) {
+        setSelectedDate(dailyHistory[0].id);
+      }
+    }
+  }, [dailyHistory]);
 
   // Determine what data to show
   // If Active: use props.drivers and props.orders
@@ -52,12 +63,19 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
     }
   };
 
-  const handleOpenOrder = (displayId: number) => {
+  const handleOpenOrder = async (displayId: number) => {
     // Search in displayedOrders
     const order = displayedOrders.find(o => o.displayId === displayId);
 
     if (order) {
       setSelectedOrder(order);
+    } else if (onFetchOrderDetails) {
+      const fetchedOrder = await onFetchOrderDetails(displayId);
+      if (fetchedOrder) {
+        setSelectedOrder(fetchedOrder);
+      } else {
+        alert(`Pedido #${displayId} não encontrado no banco de dados.`);
+      }
     } else {
       alert(`Pedido #${displayId} não encontrado.`);
     }

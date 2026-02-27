@@ -4,6 +4,8 @@ export interface Unit {
   id: string;
   name: string;
   logoUrl: string;
+  logoPath?: string;
+  themeColor?: string;
 }
 
 export interface Customer {
@@ -76,6 +78,7 @@ export interface Order {
   items: CartItem[];
   total: number;
   discount: number;
+  deliveryFee: number;
 
   status: OrderStatus;
   type: OrderType;
@@ -111,6 +114,15 @@ export interface NeighborhoodFee {
 export interface StoreSettings {
   name: string;
   logoUrl: string;
+  logoPath?: string;
+  themeColor?: string;
+  menu?: {
+    openingTime: string;
+    closingTime: string;
+    forceClose?: boolean;
+    minimumOrder: number;
+    estimatedDeliveryTime: string;
+  };
 }
 
 export interface Coupon {

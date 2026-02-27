@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Package, Plus, Search, UtensilsCrossed, Box, Trash2, CheckSquare, Square, AlertOctagon, History, List, Tag, Pencil } from 'lucide-react';
 import { Ingredient, Product, Category, WasteLog, AddOn } from '../types';
 import { RECIPES } from '../constants';
@@ -20,9 +20,10 @@ interface InventoryProps {
     addOns: AddOn[];
     onAddAddOn: (name: string, price: number, applyToAll?: boolean) => void;
     onRemoveAddOn: (id: string) => void;
+    categorias: { id: string, label: string }[];
 }
 
-export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, onUpdateIngredientName, onAddIngredient, onRemoveIngredient, onAddProduct, onRemoveProduct, onUpdateProduct, products, onLogWaste, wasteLogs, addOns, onAddAddOn, onRemoveAddOn }) => {
+export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, onUpdateIngredientName, onAddIngredient, onRemoveIngredient, onAddProduct, onRemoveProduct, onUpdateProduct, products, onLogWaste, wasteLogs, addOns, onAddAddOn, onRemoveAddOn, categorias }) => {
     const [view, setView] = useState<'STOCK' | 'MENU' | 'WASTE' | 'ADDONS'>('STOCK');
     const [filter, setFilter] = useState('');
 
@@ -38,7 +39,19 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, 
     const [newProdDesc, setNewProdDesc] = useState('');
     const [imagemFile, setImagemFile] = useState<File | null>(null);
     const [isUploading, setIsUploading] = useState(false);
-    const [newProdAllowObs, setNewProdAllowObs] = useState(false); // Changed from true to false
+    const [newProdAllowObs, setNewProdAllowObs] = useState(true);
+
+    useEffect(() => {
+        if (categorias.length > 0 && !produtoEmEdicao && !newProdCategory) {
+            setNewProdCategory(categorias[0].id);
+        }
+    }, [categorias, produtoEmEdicao, newProdCategory]);
+
+    useEffect(() => {
+        if (categorias.length > 0 && !newProdCategory) {
+            setNewProdCategory(categorias[0].id);
+        }
+    }, [categorias]);
 
     // V10: Recipe Builder State
     const [recipeSelection, setRecipeSelection] = useState<Record<string, number>>({});
@@ -80,13 +93,13 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, 
                     const filePath = `${fileName}`; // Salva na raiz do bucket 'produtos'
 
                     const { error: uploadError } = await supabase.storage
-                        .from('produtos')
+                        .from('products')
                         .upload(filePath, imagemFile);
 
                     if (uploadError) throw uploadError;
 
                     // Pega a URL pública para salvar no banco
-                    const { data } = supabase.storage.from('produtos').getPublicUrl(filePath);
+                    const { data } = supabase.storage.from('products').getPublicUrl(filePath);
                     imageUrl = data.publicUrl;
                 }
 
@@ -96,24 +109,6 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, 
                     .map(([ingredientId, amount]) => ({ ingredientId, amount }));
 
                 if (produtoEmEdicao) {
-                    // Update Product in Supabase (as requested)
-                    const { error } = await supabase
-                        .from('produtos')
-                        .update({
-                            nome: newProdName, // User specified "nome: nomeInput", falling back to correct database column mapping depending on db schema. Sticking to literal user request loosely where sensible, assuming they map columns to camelCase usually.
-                            preco: parseFloat(newProdPrice),
-                            ingredientes: recipe,
-                            name: newProdName, // Ensuring English names to prevent insert/update errors if db schema requires English
-                            price: parseFloat(newProdPrice),
-                            category: newProdCategory,
-                            description: newProdDesc,
-                            image: imageUrl,
-                            allowObservations: newProdAllowObs,
-                            recipe: recipe,
-                            allowedAddOns: allowedAddOnsSelection
-                        })
-                        .eq('id', produtoEmEdicao.id);
-
                     // Call local prop updater if exists
                     if (onUpdateProduct) {
                         onUpdateProduct(produtoEmEdicao.id, {
@@ -209,13 +204,13 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, 
 
     return (
         <div className="flex flex-col h-full bg-white rounded-3xl shadow-premium border border-border overflow-hidden">
-            <div className="p-6 border-b border-border bg-background flex justify-between items-center">
-                <div><h2 className="text-2xl font-heading font-bold text-textPrimary">Gestão de Recursos</h2><p className="text-textSecondary text-sm">Controle total da operação</p></div>
-                <div className="flex bg-white rounded-xl p-1 shadow-sm border border-border">
-                    <button onClick={() => setView('STOCK')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${view === 'STOCK' ? 'bg-textPrimary text-white shadow' : 'text-textSecondary hover:bg-background'}`}><Box size={16} className="inline mr-2" /> Estoque</button>
-                    <button onClick={() => setView('MENU')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${view === 'MENU' ? 'bg-textPrimary text-white shadow' : 'text-textSecondary hover:bg-background'}`}><UtensilsCrossed size={16} className="inline mr-2" /> Cardápio</button>
-                    <button onClick={() => setView('ADDONS')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${view === 'ADDONS' ? 'bg-textPrimary text-white shadow' : 'text-textSecondary hover:bg-background'}`}><Tag size={16} className="inline mr-2" /> Adicionais</button>
-                    <button onClick={() => setView('WASTE')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${view === 'WASTE' ? 'bg-textPrimary text-white shadow' : 'text-textSecondary hover:bg-background'}`}><AlertOctagon size={16} className="inline mr-2" /> Desperdício</button>
+            <div className="p-4 md:p-6 border-b border-border bg-background flex justify-between items-center gap-3 flex-wrap">
+                <div><h2 className="text-xl md:text-2xl font-heading font-bold text-textPrimary">Gestão de Recursos</h2><p className="text-textSecondary text-sm">Controle total da operação</p></div>
+                <div className="flex bg-white rounded-xl p-1 shadow-sm border border-border overflow-x-auto max-w-full flex-shrink-0">
+                    <button onClick={() => setView('STOCK')} className={`px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-bold transition-all whitespace-nowrap ${view === 'STOCK' ? 'bg-textPrimary text-white shadow' : 'text-textSecondary hover:bg-background'}`}><Box size={14} className="inline mr-1" /> Estoque</button>
+                    <button onClick={() => setView('MENU')} className={`px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-bold transition-all whitespace-nowrap ${view === 'MENU' ? 'bg-textPrimary text-white shadow' : 'text-textSecondary hover:bg-background'}`}><UtensilsCrossed size={14} className="inline mr-1" /> Cardápio</button>
+                    <button onClick={() => setView('ADDONS')} className={`px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-bold transition-all whitespace-nowrap ${view === 'ADDONS' ? 'bg-textPrimary text-white shadow' : 'text-textSecondary hover:bg-background'}`}><Tag size={14} className="inline mr-1" /> Adicionais</button>
+                    <button onClick={() => setView('WASTE')} className={`px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-bold transition-all whitespace-nowrap ${view === 'WASTE' ? 'bg-textPrimary text-white shadow' : 'text-textSecondary hover:bg-background'}`}><AlertOctagon size={14} className="inline mr-1" /> Desperdício</button>
                 </div>
             </div>
 
@@ -226,8 +221,8 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, 
                         <select value={newIngUnit} onChange={e => setNewIngUnit(e.target.value)} className="flex-1 bg-background border border-border rounded-xl px-4 py-3 outline-none focus:border-accent"><option value="un">Unidade</option><option value="kg">KG</option><option value="L">Litro</option><option value="fatia">Fatia</option></select>
                         <button onClick={handleAddIngredient} className="bg-success text-white p-3 rounded-xl hover:bg-green-600"><Plus /></button>
                     </div>
-                    <div className="flex-1 overflow-y-auto">
-                        <table className="w-full text-left border-collapse">
+                    <div className="flex-1 overflow-y-auto overflow-x-auto">
+                        <table className="w-full text-left border-collapse min-w-[500px]">
                             <thead className="bg-background text-xs text-textSecondary uppercase font-bold sticky top-0 z-10"><tr><th className="p-4 border-b border-border w-1/2">Insumo</th><th className="p-4 border-b border-border w-1/4 text-center">Unidade</th><th className="p-4 border-b border-border w-1/4 text-right">Qtd</th><th className="p-4 border-b border-border w-16"></th></tr></thead>
                             <tbody>{filteredInventory.map(item => (
                                 <tr key={item.id} className="border-b border-border hover:bg-background/50 group">
@@ -282,7 +277,11 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, 
                                 ) : null}
                             </div>
 
-                            <select className="w-full p-3 rounded-xl border border-border outline-none focus:border-accent bg-white" value={newProdCategory} onChange={e => setNewProdCategory(e.target.value as Category)}><option value="BURGER">Hambúrguer</option><option value="SIDE">Acompanhamento</option><option value="DRINK">Bebida</option><option value="DESSERT">Sobremesa</option></select>
+                            <select className="w-full p-3 rounded-xl border border-border outline-none focus:border-accent bg-white" value={newProdCategory} onChange={e => setNewProdCategory(e.target.value as Category)}>
+                                {categorias.map(cat => (
+                                    <option key={cat.id} value={cat.id}>{cat.label}</option>
+                                ))}
+                            </select>
                             <textarea className="w-full p-3 rounded-xl border border-border outline-none focus:border-accent h-24 resize-none bg-white" value={newProdDesc} onChange={e => setNewProdDesc(e.target.value)} placeholder="Descrição" />
 
                             {/* V10: Recipe Builder */}

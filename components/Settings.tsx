@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StoreSettings, Coupon } from '../types';
-import { Save, Store, Image as ImageIcon, Tag, Trash2, Plus, Users, Shield, Eye } from 'lucide-react';
+import { Save, Store, Image as ImageIcon, Tag, Trash2, Plus, Users, Shield, Eye, Link2, Copy, Check, Globe, ToggleLeft, ToggleRight, Sun } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { useParams } from 'react-router-dom';
+import { LogoUploader } from './LogoUploader';
 
 interface SettingsProps {
   settings: StoreSettings;
@@ -14,36 +17,76 @@ interface SettingsProps {
 }
 
 export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, coupons, onAddCoupon, onRemoveCoupon, cashiers = [], onAddCashier, onRemoveCashier }) => {
+  const { tenantId } = useParams<{ tenantId: string }>();
   const [name, setName] = useState(settings.name);
   const [logo, setLogo] = useState(settings.logoUrl);
+  const [themeColor, setThemeColor] = useState(settings.themeColor || '#f97316');
   const [newCode, setNewCode] = useState('');
   const [newPercent, setNewPercent] = useState('');
+
+  // Online menu state
+  const [openingTime, setOpeningTime] = useState(settings.menu?.openingTime || '18:00');
+  const [closingTime, setClosingTime] = useState(settings.menu?.closingTime || '23:59');
+  const [forceClose, setForceClose] = useState(settings.menu?.forceClose || false);
+  const [minimumOrder, setMinimumOrder] = useState(settings.menu?.minimumOrder || 0);
+  const [estimatedDeliveryTime, setEstimatedDeliveryTime] = useState(settings.menu?.estimatedDeliveryTime || '40-50 min');
+
+  const [slug, setSlug] = useState('');
+  const [menuEnabled, setMenuEnabled] = useState(true);
+  const [slugSaving, setSlugSaving] = useState(false);
+  const [slugCopied, setSlugCopied] = useState(false);
+  const [slugError, setSlugError] = useState('');
 
   // Cashier Form State
   const [cashierEmail, setCashierEmail] = useState('');
   const [cashierPass, setCashierPass] = useState('');
   const [cashierPassConfirm, setCashierPassConfirm] = useState('');
 
-  const handleSave = () => { onUpdateSettings({ name, logoUrl: logo }); alert("Salvo!"); };
+  // Load slug on mount
+  useEffect(() => {
+    if (!tenantId) return;
+    supabase.from('tenants').select('slug, online_menu_enabled').eq('id', tenantId).single().then(({ data }) => {
+      if (data) {
+        setSlug(data.slug || '');
+        setMenuEnabled(data.online_menu_enabled ?? true);
+      }
+    });
+  }, [tenantId]);
+
+  const handleSaveSlug = async () => {
+    if (!tenantId) return;
+    if (!slug.trim()) { setSlugError('Digite um slug.'); return; }
+    if (!/^[a-z0-9-]+$/.test(slug)) { setSlugError('Use apenas letras minúsculas, números e hífens.'); return; }
+    setSlugError('');
+    setSlugSaving(true);
+    const { error } = await supabase.from('tenants').update({ slug: slug.trim(), online_menu_enabled: menuEnabled }).eq('id', tenantId);
+    setSlugSaving(false);
+    if (error) {
+      if (error.code === '23505') setSlugError('Este link já está em uso. Escolha outro.');
+      else setSlugError('Erro ao salvar: ' + error.message);
+    } else {
+      alert('Link do cardápio salvo!');
+    }
+  };
+
+  const menuLink = slug ? `${window.location.origin}/menu/${slug}` : '';
+
+  const handleCopyLink = () => {
+    if (!menuLink) return;
+    navigator.clipboard.writeText(menuLink);
+    setSlugCopied(true);
+    setTimeout(() => setSlugCopied(false), 2000);
+  };
+
+  const handleSave = () => { onUpdateSettings({ name, logoUrl: logo, themeColor, menu: { openingTime, closingTime, forceClose, minimumOrder, estimatedDeliveryTime } }); alert('Salvo!'); };
   const handleAddCoupon = () => { if (newCode && newPercent) { onAddCoupon(newCode.toUpperCase(), parseFloat(newPercent)); setNewCode(''); setNewPercent(''); } };
 
   const handleCreateCashier = async () => {
     if (!onAddCashier) return;
-    if (!cashierEmail || !cashierPass) {
-      alert("Preencha identificação e senha.");
-      return;
-    }
-
-    // Auto-append domain for easier user management
+    if (!cashierEmail || !cashierPass) { alert('Preencha identificação e senha.'); return; }
     let finalEmail = cashierEmail;
-    if (!finalEmail.includes('@')) {
-      finalEmail = `${finalEmail.toLowerCase().replace(/\s+/g, '')}@loja.com`;
-    }
-
-    if (cashierPass !== cashierPassConfirm) {
-      alert("Senhas não conferem.");
-      return;
-    }
+    if (!finalEmail.includes('@')) finalEmail = `${finalEmail.toLowerCase().replace(/\s+/g, '')}@loja.com`;
+    if (cashierPass !== cashierPassConfirm) { alert('Senhas não conferem.'); return; }
     await onAddCashier(finalEmail, cashierPass);
     setCashierEmail('');
     setCashierPass('');
@@ -57,9 +100,179 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
         <h2 className="text-xl font-heading font-extrabold text-textPrimary mb-6 flex items-center gap-2"><Store size={20} className="text-accent" /> Dados da Unidade</h2>
         <div className="space-y-5">
           <div><label className="block text-xs font-bold text-textSecondary mb-1">Nome</label><input value={name} onChange={e => setName(e.target.value)} className="w-full bg-background border border-border rounded-xl p-3 outline-none focus:border-accent" /></div>
-          <div><label className="block text-xs font-bold text-textSecondary mb-1">Logo URL</label><input value={logo} onChange={e => setLogo(e.target.value)} className="w-full bg-background border border-border rounded-xl p-3 outline-none focus:border-accent" /></div>
+          <div>
+            <LogoUploader
+              tenantId={tenantId || ''}
+              currentLogoUrl={logo}
+              onSuccess={(url) => setLogo(url)}
+            />
+          </div>
           <button onClick={handleSave} className="w-full bg-accent text-white font-bold py-3 rounded-xl shadow-lg mt-2 flex items-center justify-center gap-2"><Save size={18} /> Salvar</button>
         </div>
+      </div>
+
+      {/* Theme Selection */}
+      <div className="bg-white rounded-3xl shadow-premium border border-border p-8 h-fit">
+        <h2 className="text-xl font-heading font-extrabold text-textPrimary mb-1 flex items-center gap-2">
+          <Sun size={20} className="text-amber-500" /> Identidade Visual
+        </h2>
+        <p className="text-xs text-textSecondary mb-6">Escolha a cor que melhor representa sua lanchonete.</p>
+
+        <div className="grid grid-cols-4 gap-4 mb-8">
+          {[
+            { name: 'Laranja (Padrão)', color: '#f97316' },
+            { name: 'Vermelho Fogo', color: '#ef4444' },
+            { name: 'Verde Esmeralda', color: '#10b981' },
+            { name: 'Azul Oceano', color: '#3b82f6' },
+            { name: 'Rosa Chiclete', color: '#ec4899' },
+            { name: 'Âmbar Quente', color: '#f59e0b' },
+            { name: 'Ciano Vibrante', color: '#06b6d4' },
+            { name: 'Slate Moderno', color: '#475569' },
+          ].map((palette) => (
+            <button
+              key={palette.color}
+              onClick={() => setThemeColor(palette.color)}
+              title={palette.name}
+              className={`group relative h-12 rounded-2xl transition-all duration-300 ${themeColor === palette.color ? 'ring-4 ring-offset-2' : 'hover:scale-105'
+                }`}
+              style={{
+                backgroundColor: palette.color,
+                boxShadow: themeColor === palette.color ? `0 0 20px ${palette.color}40` : 'none',
+                // @ts-ignore
+                '--ring-color': palette.color
+              } as any}
+            >
+              {themeColor === palette.color && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <Check size={20} className="text-white drop-shadow-md" />
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+
+        <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-center gap-4">
+          <div
+            className="w-10 h-10 rounded-xl shadow-lg flex-shrink-0"
+            style={{ backgroundColor: themeColor }}
+          />
+          <div className="flex-1">
+            <p className="text-sm font-bold text-slate-700">Prévia da Cor</p>
+            <p className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{themeColor}</p>
+          </div>
+          <button
+            onClick={handleSave}
+            className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 transition-all shadow-sm"
+          >
+            Aplicar
+          </button>
+        </div>
+      </div>
+
+      {/* Online Menu Link */}
+      <div className="bg-white rounded-3xl shadow-premium border border-border p-8 h-fit">
+        <h2 className="text-xl font-heading font-extrabold text-textPrimary mb-1 flex items-center gap-2">
+          <Globe size={20} className="text-emerald-500" /> Cardápio Online
+        </h2>
+        <p className="text-xs text-textSecondary mb-5">Link público para clientes fazerem pedidos de delivery.</p>
+
+        {/* Toggle */}
+        <button
+          type="button"
+          onClick={() => setMenuEnabled(e => !e)}
+          className={`w-full flex items-center justify-between p-4 rounded-2xl border mb-5 transition-all ${menuEnabled ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}
+        >
+          <p className={`font-bold text-sm ${menuEnabled ? 'text-emerald-700' : 'text-slate-500'}`}>
+            {menuEnabled ? '✅ Cardápio ativo' : '⏸️ Cardápio desativado'}
+          </p>
+          {menuEnabled ? <ToggleRight size={28} className="text-emerald-500" /> : <ToggleLeft size={28} className="text-slate-400" />}
+        </button>
+
+        {/* Slug input */}
+        <div className="mb-4">
+          <label className="block text-xs font-bold text-textSecondary mb-2">Link personalizado</label>
+          <div className="flex items-center border border-border rounded-xl overflow-hidden bg-background">
+            <span className="text-xs text-slate-400 px-3 py-3 bg-slate-50 border-r border-border whitespace-nowrap">/menu/</span>
+            <input
+              value={slug}
+              onChange={e => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+              placeholder="minha-lanchonete"
+              className="flex-1 px-3 py-3 outline-none text-sm bg-background"
+            />
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1">Letras minúsculas, números e hífens apenas.</p>
+          {slugError && <p className="text-xs text-red-500 font-bold mt-1">{slugError}</p>}
+        </div>
+
+        {/* Preview + copy */}
+        {slug && (
+          <div className="flex items-center gap-2 bg-slate-50 rounded-xl border border-slate-200 px-3 py-2 mb-4 overflow-hidden">
+            <span className="flex-1 text-xs text-slate-600 font-mono truncate">{window.location.origin}/menu/{slug}</span>
+            <button onClick={handleCopyLink} title="Copiar link"
+              className={`p-1.5 rounded-lg transition-all ${slugCopied ? 'bg-emerald-100 text-emerald-600' : 'bg-white border border-slate-200 text-slate-500 hover:text-accent'}`}>
+              {slugCopied ? <Check size={14} /> : <Copy size={14} />}
+            </button>
+            <a href={`/menu/${slug}`} target="_blank" rel="noopener noreferrer"
+              className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-500 hover:text-accent transition-all" title="Abrir cardápio">
+              <Globe size={14} />
+            </a>
+          </div>
+        )}
+
+        <button onClick={handleSaveSlug} disabled={slugSaving}
+          className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-60">
+          <Save size={16} /> {slugSaving ? 'Salvando...' : 'Salvar Link'}
+        </button>
+      </div>
+
+      {/* Online Menu Settings Form (Delivery Rules) */}
+      <div className="bg-white rounded-3xl shadow-premium border border-border p-8 h-fit lg:col-span-2">
+        <h2 className="text-xl font-heading font-extrabold text-textPrimary mb-6 flex items-center gap-2">
+          <Globe size={20} className="text-accent" /> Regras do Delivery (Cardápio)
+        </h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 flex items-center justify-between">
+            <div>
+              <p className="font-bold text-sm text-slate-700">Forçar Loja Fechada</p>
+              <p className="text-xs text-slate-500">Impede pedidos independente do horário</p>
+            </div>
+            <button
+              onClick={() => setForceClose(!forceClose)}
+              className={`w-14 h-8 rounded-full transition-colors flex items-center px-1 ${forceClose ? 'bg-red-500 justify-end' : 'bg-slate-300 justify-start'}`}
+            >
+              <div className="w-6 h-6 rounded-full bg-white shadow-sm" />
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">Abre às</label>
+                <input type="time" value={openingTime} onChange={e => setOpeningTime(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none focus:border-accent font-mono" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">Fecha às</label>
+                <input type="time" value={closingTime} onChange={e => setClosingTime(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none focus:border-accent font-mono" />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Pedido Mínimo (R$)</label>
+            <input type="number" step="0.01" value={minimumOrder} onChange={e => setMinimumOrder(parseFloat(e.target.value))} className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none focus:border-accent" />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Tempo Estimado</label>
+            <input type="text" placeholder="Ex: 40-50 min" value={estimatedDeliveryTime} onChange={e => setEstimatedDeliveryTime(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none focus:border-accent" />
+          </div>
+        </div>
+
+        <button onClick={handleSave} className="w-full md:w-auto px-8 bg-accent text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2 float-right hover:bg-orange-600 transition-colors">
+          <Save size={18} /> Salvar Regras
+        </button>
+        <div className="clear-both"></div>
       </div>
 
       {/* Coupons */}

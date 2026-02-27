@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Plus, Minus, Trash2, CreditCard, Banknote, Smartphone, CheckCircle, ShoppingCart, X, ShoppingBag, MapPin, Store, ChefHat, UserSearch, UserPlus, Tag } from 'lucide-react';
-import { Product, CartItem, Category, PaymentMethod, OrderType, Ingredient, DeliveryDetails, Customer, Order, Coupon, AddOn } from '../types';
+import { Product, CartItem, Category, PaymentMethod, OrderType, Ingredient, DeliveryDetails, Customer, Order, Coupon, AddOn, NeighborhoodFee } from '../types';
 import { RECIPES } from '../constants';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../contexts/ThemeContext';
 
 interface POSProps {
   products: Product[];
-  onPlaceOrder: (items: CartItem[], type: OrderType, payment: PaymentMethod, deliveryDetails?: DeliveryDetails, dineInName?: string, tableName?: string, sendToKitchenOnly?: boolean, receivedAmount?: number, changeAmount?: number) => void;
+  onPlaceOrder: (items: CartItem[], type: OrderType, payment: PaymentMethod, deliveryDetails?: DeliveryDetails, dineInName?: string, tableName?: string, sendToKitchenOnly?: boolean, receivedAmount?: number, changeAmount?: number, discount?: number, deliveryFee?: number) => void;
   onPayOrder: (orderId: string, payment: PaymentMethod, discount: number, receivedAmount?: number, changeAmount?: number) => void;
   inventory: Ingredient[];
   customers: Customer[];
@@ -15,17 +15,43 @@ interface POSProps {
   activeOrders: Order[];
   coupons: Coupon[];
   addOns: AddOn[]; // V12
+  categorias: { id: string, label: string }[];
+  onAddCategory: (name: string) => void;
+  onUpdateCategory: (id: string, name: string) => void;
+  onDeleteCategory: (id: string) => void;
+  onUpdateFee: (neighborhood: string, price: number) => void;
+  onRemoveFee: (neighborhood: string) => void;
+  neighborhoodFees: NeighborhoodFee[];
+  // Global State (Uplifted from POS)
+  cart: CartItem[];
+  setCart: React.Dispatch<React.SetStateAction<CartItem[]>>;
+  orderType: OrderType;
+  setOrderType: React.Dispatch<React.SetStateAction<OrderType>>;
+  paymentMethod: PaymentMethod;
+  setPaymentMethod: React.Dispatch<React.SetStateAction<PaymentMethod>>;
+  deliveryForm: DeliveryDetails;
+  setDeliveryForm: React.Dispatch<React.SetStateAction<DeliveryDetails>>;
+  dineInName: string;
+  setDineInName: React.Dispatch<React.SetStateAction<string>>;
+  selectedCustomer: Customer | null;
+  setSelectedCustomer: React.Dispatch<React.SetStateAction<Customer | null>>;
+  appliedCoupon: Coupon | null;
+  setAppliedCoupon: React.Dispatch<React.SetStateAction<Coupon | null>>;
+  showCheckout: boolean;
+  setShowCheckout: React.Dispatch<React.SetStateAction<boolean>>;
+  receivedAmountStr: string;
+  setReceivedAmountStr: React.Dispatch<React.SetStateAction<string>>;
 }
 
-export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, inventory, customers, onAddCustomer, activeOrders, coupons, addOns }) => {
+export const POS: React.FC<POSProps> = ({
+  products, onPlaceOrder, onPayOrder, inventory, customers, onAddCustomer, activeOrders, coupons, addOns, categorias, onAddCategory, onUpdateCategory, onDeleteCategory, onUpdateFee, onRemoveFee, neighborhoodFees,
+  cart, setCart, orderType, setOrderType, paymentMethod, setPaymentMethod, deliveryForm, setDeliveryForm, dineInName, setDineInName, selectedCustomer, setSelectedCustomer, appliedCoupon, setAppliedCoupon, showCheckout, setShowCheckout,
+  receivedAmountStr, setReceivedAmountStr
+}) => {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   const [activeCategory, setActiveCategory] = useState<Category | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [showCheckout, setShowCheckout] = useState(false);
-  const [orderType, setOrderType] = useState<OrderType>('DINE_IN');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CREDIT');
 
   // Selection
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -40,97 +66,40 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
   // CRM
   const [customerSearch, setCustomerSearch] = useState('');
   const [isNewCustomer, setIsNewCustomer] = useState(false);
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
 
   // Forms
-  const [dineInName, setDineInName] = useState('');
-  const [deliveryForm, setDeliveryForm] = useState<DeliveryDetails>({
-    customerName: '',
-    phone: '',
-    street: '',
-    number: '',
-    neighborhood: ''
-  });
-
   // Coupon
   const [couponCode, setCouponCode] = useState('');
-  const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
-  const [receivedAmountStr, setReceivedAmountStr] = useState<string>('');
 
   // Dynamic Categories V14
-  const [categorias, setCategorias] = useState<{ id: string, label: string }[]>([]);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [newCatName, setNewCatName] = useState('');
   const [editingCatId, setEditingCatId] = useState<string | null>(null);
   const [editingCatName, setEditingCatName] = useState('');
+  const [showNeighborhoodSuggestions, setShowNeighborhoodSuggestions] = useState(false);
 
-  useEffect(() => {
-    fetchCategorias();
-  }, []);
 
-  const fetchCategorias = async () => {
-    try {
-      const { data, error } = await supabase.from('categorias').select('*').order('nome');
-      if (data) {
-        setCategorias(data.map(c => ({ id: c.nome, label: c.nome })));
-      } else {
-        // Fallback for visual testing if table is empty or missing
-        setCategorias([
-          { id: 'BURGER', label: 'Burgers' },
-          { id: 'SIDE', label: 'Acomp.' },
-          { id: 'DRINK', label: 'Bebidas' },
-          { id: 'DESSERT', label: 'Doces' },
-        ]);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
 
   const currentCategories = [{ id: 'ALL', label: 'Tudo' }, ...categorias];
 
-  const handleAddCategory = async () => {
+  const handleAddCategoryLocal = async () => {
     if (!newCatName.trim()) return;
-    try {
-      const { error } = await supabase.from('categorias').insert([{ nome: newCatName.trim() }]);
-      if (error) {
-        // Silently fallback to local state if table doesn't exist
-        setCategorias(prev => [...prev, { id: newCatName.trim(), label: newCatName.trim() }]);
-      } else {
-        fetchCategorias();
-      }
-      setNewCatName('');
-    } catch (err) { }
+    onAddCategory(newCatName.trim());
+    setNewCatName('');
   };
 
-  const handleUpdateCategory = async (oldName: string) => {
-    if (!editingCatName.trim() || oldName === editingCatName.trim()) {
+  const handleUpdateCategoryLocal = async (id: string) => {
+    if (!editingCatName.trim()) {
       setEditingCatId(null);
       return;
     }
-    try {
-      const { error } = await supabase.from('categorias').update({ nome: editingCatName.trim() }).eq('nome', oldName);
-      if (error) {
-        setCategorias(prev => prev.map(c => c.id === oldName ? { id: editingCatName.trim(), label: editingCatName.trim() } : c));
-      } else {
-        fetchCategorias();
-      }
-    } catch (err) { }
+    onUpdateCategory(id, editingCatName.trim());
     setEditingCatId(null);
   };
 
-  const handleDeleteCategory = async (idName: string) => {
-    try {
-      const { error } = await supabase.from('categorias').delete().eq('nome', idName);
-
-      if (error) {
-        alert("Não é possível excluir. Existem produtos usando esta categoria.");
-        return;
-      }
-
-      setCategorias((prev) => prev.filter(c => c.id !== idName));
-    } catch (err) {
-      alert("Não é possível excluir. Ocorreu um erro no servidor.");
+  const handleDeleteCategoryLocal = async (id: string) => {
+    if (window.confirm("Deseja realmente excluir esta categoria?")) {
+      onDeleteCategory(id);
     }
   };
 
@@ -215,8 +184,14 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
 
   const tabSubtotal = selectedTabToPay ? selectedTabToPay.total : 0;
   const currentTotal = selectedTabToPay ? tabSubtotal : cartSubtotal;
+
+  // Delivery Fee Calculation V16
+  const deliveryFee = (orderType === 'DELIVERY' && !selectedTabToPay)
+    ? neighborhoodFees.find(f => f.name.toLowerCase() === deliveryForm.neighborhood.toLowerCase())?.price || 0
+    : 0;
+
   const discountAmount = appliedCoupon ? (currentTotal * (appliedCoupon.discountPercent / 100)) : 0;
-  const finalTotal = currentTotal - discountAmount;
+  const finalTotal = currentTotal - discountAmount + deliveryFee;
 
   const handleApplyCoupon = () => {
     const coupon = coupons.find(c => c.code.toLowerCase() === couponCode.toLowerCase() && c.active);
@@ -332,24 +307,28 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
       undefined,
       sendToKitchenOnly,
       paymentMethod === 'CASH' && !sendToKitchenOnly ? parsedReceived : undefined,
-      paymentMethod === 'CASH' && !sendToKitchenOnly ? changeAmount : undefined
+      paymentMethod === 'CASH' && !sendToKitchenOnly ? changeAmount : undefined,
+      discountAmount,
+      deliveryFee
     );
 
-    // Reset
-    setCart([]); setShowCheckout(false); setAppliedCoupon(null); setCouponCode(''); setReceivedAmountStr('');
-    setDeliveryForm({ customerName: '', phone: '', street: '', number: '', neighborhood: '' });
-    setDineInName(''); setSelectedCustomer(null); setCustomerSearch('');
+    // After sending to kitchen, go back to open tabs view
+    if (sendToKitchenOnly) {
+      setShowCheckout(false);
+    }
+
+    return;
   };
 
   // V12: Calculate Modal Total dynamically
   const modalTotal = selectedProduct ? (selectedProduct.price + modalSelectedAddOns.reduce((sum, a) => sum + a.price, 0)) * modalQuantity : 0;
 
   return (
-    <div className="flex h-full gap-6">
-      <div className="flex-1 flex flex-col gap-6">
-        <div className="flex items-center justify-between">
-          <div><h2 className="text-2xl font-heading font-bold text-textPrimary">Cardápio</h2></div>
-          <div className="relative w-72">
+    <div className="flex flex-col lg:flex-row h-full gap-4 lg:gap-6 relative">
+      <div className="flex-1 flex flex-col gap-4 min-w-0 pb-20 lg:pb-0">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-lg lg:text-2xl font-heading font-bold text-textPrimary">Cardápio</h2>
+          <div className="relative w-full max-w-[200px] lg:w-72">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-textSecondary" size={18} />
             <input type="text" placeholder="Buscar..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-white border border-border pl-10 pr-4 py-2.5 rounded-xl shadow-sm outline-none focus:border-accent" />
           </div>
@@ -416,7 +395,8 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
         </div>
       </div>
 
-      <div className="w-96 bg-white rounded-3xl flex flex-col border border-border shadow-premium h-[calc(100vh-2rem)] sticky top-4">
+      {/* ── DESKTOP SIDEBAR CART ── */}
+      <div className="hidden lg:flex w-96 bg-white rounded-3xl flex-col border border-border shadow-premium h-[calc(100vh-2rem)] sticky top-4">
         <div className="p-6 border-b border-border">
           <h3 className="font-heading font-bold text-xl text-textPrimary flex items-center gap-2"><ShoppingCart className="text-accent" size={24} /> Pedido Atual</h3>
         </div>
@@ -528,7 +508,38 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
                         <input className="w-[70%] bg-background border border-border rounded p-2 text-xs outline-none focus:border-accent" placeholder="Rua" value={deliveryForm.street} onChange={e => setDeliveryForm(p => ({ ...p, street: e.target.value }))} />
                         <input type="number" className="w-[30%] bg-background border border-border rounded p-2 text-xs outline-none focus:border-accent" placeholder="Nº" value={deliveryForm.number} onChange={e => setDeliveryForm(p => ({ ...p, number: e.target.value }))} />
                       </div>
-                      <input className="w-full bg-background border border-border rounded p-2 text-xs outline-none focus:border-accent" placeholder="Bairro" value={deliveryForm.neighborhood} onChange={e => setDeliveryForm(p => ({ ...p, neighborhood: e.target.value }))} />
+                      <div className="relative">
+                        <input
+                          className="w-full bg-background border border-border rounded p-2 text-xs outline-none focus:border-accent"
+                          placeholder="Bairro"
+                          value={deliveryForm.neighborhood}
+                          onChange={(e) => {
+                            setDeliveryForm(p => ({ ...p, neighborhood: e.target.value }));
+                            setShowNeighborhoodSuggestions(true);
+                          }}
+                          onBlur={() => setTimeout(() => setShowNeighborhoodSuggestions(false), 200)}
+                          onFocus={() => setShowNeighborhoodSuggestions(true)}
+                        />
+                        {showNeighborhoodSuggestions && deliveryForm.neighborhood && (
+                          <div className="absolute bottom-full left-0 w-full bg-white border border-border rounded-lg shadow-lg z-20 max-h-40 overflow-y-auto mb-1">
+                            {neighborhoodFees
+                              .filter(f => f.name.toLowerCase().includes(deliveryForm.neighborhood.toLowerCase()))
+                              .map(f => (
+                                <div
+                                  key={f.id}
+                                  onClick={() => {
+                                    setDeliveryForm(p => ({ ...p, neighborhood: f.name }));
+                                    setShowNeighborhoodSuggestions(false);
+                                  }}
+                                  className="p-2 hover:bg-gray-50 cursor-pointer text-xs border-b border-gray-100 last:border-0 flex justify-between items-center"
+                                >
+                                  <span className="font-bold">{f.name}</span>
+                                  <span className="text-accent font-bold">R$ {f.price.toFixed(2)}</span>
+                                </div>
+                              ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -583,6 +594,7 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
 
               <div className="bg-background p-3 rounded-lg space-y-1">
                 <div className="flex justify-between text-xs text-textSecondary"><span>Subtotal</span><span>R$ {currentTotal.toFixed(2)}</span></div>
+                {deliveryFee > 0 && <div className="flex justify-between text-xs text-accent font-bold"><span>Taxa de Entrega</span><span>+ R$ {deliveryFee.toFixed(2)}</span></div>}
                 {discountAmount > 0 && <div className="flex justify-between text-xs text-green-600 font-bold"><span>Desconto ({appliedCoupon?.code})</span><span>- R$ {discountAmount.toFixed(2)}</span></div>}
                 <div className="flex justify-between text-lg font-extrabold text-textPrimary pt-2 border-t border-border mt-1"><span>Total</span><span>R$ {finalTotal.toFixed(2)}</span></div>
               </div>
@@ -708,11 +720,11 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
                     : 'bg-slate-50 border-slate-200 text-slate-800 focus:border-accent focus:bg-white'
                     }`}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleAddCategory();
+                    if (e.key === 'Enter') handleAddCategoryLocal();
                   }}
                 />
                 <button
-                  onClick={handleAddCategory}
+                  onClick={handleAddCategoryLocal}
                   disabled={!newCatName.trim()}
                   className="bg-accent text-white px-5 rounded-xl font-bold flex items-center gap-2 hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
@@ -738,12 +750,12 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
                             }`}
                           autoFocus
                           onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleUpdateCategory(cat.id);
+                            if (e.key === 'Enter') handleUpdateCategoryLocal(cat.id);
                             if (e.key === 'Escape') setEditingCatId(null);
                           }}
                         />
                         <button
-                          onClick={() => handleUpdateCategory(cat.id)}
+                          onClick={() => handleUpdateCategoryLocal(cat.id)}
                           className="p-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors"
                         >
                           <CheckCircle size={20} />
@@ -764,7 +776,7 @@ export const POS: React.FC<POSProps> = ({ products, onPlaceOrder, onPayOrder, in
                             <Tag size={18} />
                           </button>
                           <button
-                            onClick={() => handleDeleteCategory(cat.id)}
+                            onClick={() => handleDeleteCategoryLocal(cat.id)}
                             className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-red-500/10 text-red-400 hover:text-red-300' : 'hover:bg-red-50 text-red-500 hover:text-red-600'}`}
                             title="Excluir Categoria"
                           >

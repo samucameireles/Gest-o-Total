@@ -20,7 +20,8 @@ import {
     Search,
     ChevronLeft,
     ChevronRight,
-    Archive
+    Archive,
+    ShoppingBag
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 
@@ -219,19 +220,6 @@ export const CashFlow: React.FC<CashFlowProps> = ({
             // Mantém update local herdado pro restante do App (Dashboard)
             onAddTransaction(tipoTransacao, valor, descricao);
 
-            // --- INSERÇÃO NO SUPABASE (Auditoria Permanente) ---
-            try {
-                await supabase.from('movimentacoes_caixa').insert([{
-                    caixa_id: activeSession.id,
-                    tipo: nomeTipo,
-                    valor: valor,
-                    descricao: descricao,
-                    data_hora: dataHoraAtual.toISOString(),
-                    responsavel: responsavelId
-                }]);
-            } catch (error) {
-                console.error("Erro Silencioso no Supabase:", error);
-            }
         }
         setAmountInput('');
         setDescriptionInput('');
@@ -295,7 +283,7 @@ export const CashFlow: React.FC<CashFlowProps> = ({
     }
 
     return (
-        <div className={`h-full flex flex-col gap-6 animate-in fade-in duration-500 overflow-y-auto custom-scrollbar pb-20`}>
+        <div className={`flex flex-col gap-6 animate-in fade-in duration-500 pb-16`}>
             {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
@@ -478,63 +466,115 @@ export const CashFlow: React.FC<CashFlowProps> = ({
                     </div>
 
                     {/* Transaction History List */}
-                    {/* Transaction History List */}
-                    <div className={`rounded-2xl border overflow-hidden mt-6 ${isDark ? 'bg-[#1E1E24] border-white/5' : 'bg-white border-slate-100 shadow-sm'}`}>
-                        <div className={`p-6 border-b ${isDark ? 'border-white/5' : 'border-slate-100'}`}>
-                            <h3 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-800'}`}>Movimentações Detalhadas</h3>
+                    <div className={`rounded-2xl border mt-4 ${isDark ? 'bg-[#1E1E24] border-white/10' : 'bg-white border-slate-200 shadow-sm'}`}>
+                        {/* Header */}
+                        <div className={`px-6 py-5 border-b flex items-center justify-between ${isDark ? 'border-white/10' : 'border-slate-100'}`}>
+                            <div className="flex items-center gap-3">
+                                <div className={`p-2.5 rounded-xl ${isDark ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
+                                    <TrendingUp size={20} />
+                                </div>
+                                <div>
+                                    <h3 className={`text-lg font-black tracking-tight ${isDark ? 'text-white' : 'text-slate-800'}`}>Movimentações Detalhadas</h3>
+                                    <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                                        {(movimentacoes.length + activeOrders.length)} registros neste turno
+                                    </p>
+                                </div>
+                            </div>
                         </div>
-                        <div className="w-full min-h-[300px] max-h-[500px] overflow-y-auto mt-4 custom-scrollbar">
-                            <table className="w-full text-sm">
-                                <thead className={`text-left font-bold uppercase tracking-wider ${isDark ? 'bg-white/5 text-slate-400' : 'bg-slate-50 text-slate-500'} sticky top-0 z-10`}>
-                                    <tr>
-                                        <th className="py-3 px-4">Hora</th>
-                                        <th className="py-3 px-4">Tipo</th>
-                                        <th className="py-3 px-4">Descrição</th>
-                                        <th className="py-3 px-4 text-right">Valor</th>
-                                        <th className="py-3 px-4">Resp.</th>
+
+                        {/* Table */}
+                        <div className="overflow-x-auto">
+                            <table className="w-full">
+                                <thead>
+                                    <tr className={`text-left text-[11px] font-bold uppercase tracking-widest border-b ${isDark ? 'text-slate-500 border-white/5 bg-black/20' : 'text-slate-400 border-slate-100 bg-slate-50/80'}`}>
+                                        <th className="py-3.5 px-6">Horário</th>
+                                        <th className="py-3.5 px-6 text-center">Tipo</th>
+                                        <th className="py-3.5 px-6">Descrição</th>
+                                        <th className="py-3.5 px-6 text-right">Valor</th>
+                                        <th className="py-3.5 px-6 text-right">Responsável</th>
                                     </tr>
                                 </thead>
-                                <tbody className={`divide-y ${isDark ? 'divide-white/5' : 'divide-slate-100'}`}>
+                                <tbody>
                                     {movimentacoes.length > 0 || activeOrders.length > 0 ? (
                                         <>
-                                            {movimentacoes.map((item) => (
-                                                <tr key={item.id} className={isDark ? 'hover:bg-white/5' : 'hover:bg-slate-50'}>
-                                                    <td className={`py-3 px-4 font-mono ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                                                        {new Date(item.data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                            {movimentacoes.map((item, idx) => (
+                                                <tr
+                                                    key={`mov-${item.id}`}
+                                                    className={`border-b transition-colors ${isDark
+                                                        ? `border-white/5 ${idx % 2 === 0 ? '' : 'bg-white/[0.02]'} hover:bg-white/[0.04]`
+                                                        : `border-slate-100 ${idx % 2 === 0 ? '' : 'bg-slate-50/50'} hover:bg-blue-50/30`
+                                                        }`}
+                                                >
+                                                    <td className={`py-4 px-6 text-sm font-medium ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                                                        {item.data_hora
+                                                            ? new Date(item.data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                                                            : '--:--'}
                                                     </td>
-                                                    <td className="py-3 px-4">
-                                                        <span className={`px-2 py-1 rounded text-xs font-bold ${item.tipo === 'Sangria' ? 'bg-red-500/10 text-red-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
-                                                            {item.tipo}
-                                                        </span>
+                                                    <td className="py-4 px-6">
+                                                        <div className="flex justify-center">
+                                                            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wide ${item.tipo === 'Sangria'
+                                                                ? 'bg-red-500/10 text-red-500 border border-red-500/20'
+                                                                : 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+                                                                }`}>
+                                                                {item.tipo === 'Sangria' ? <ArrowUpCircle size={13} /> : <ArrowDownCircle size={13} />}
+                                                                {item.tipo || 'MOVIMENTAÇÃO'}
+                                                            </span>
+                                                        </div>
                                                     </td>
-                                                    <td className={`py-3 px-4 ${isDark ? 'text-white' : 'text-slate-800'}`}>{item.descricao}</td>
-                                                    <td className={`py-3 px-4 text-right font-bold ${item.tipo === 'Sangria' ? 'text-red-500' : 'text-emerald-500'}`}>
-                                                        {item.tipo === 'Sangria' ? '-' : '+'} R$ {item.valor.toFixed(2)}
+                                                    <td className={`py-4 px-6 text-sm font-semibold ${isDark ? 'text-white' : 'text-slate-800'}`}>
+                                                        {item.descricao || 'Sem descrição'}
                                                     </td>
-                                                    <td className={`py-3 px-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{item.responsavel}</td>
+                                                    <td className={`py-4 px-6 text-right text-sm font-black tabular-nums ${item.tipo === 'Sangria' ? 'text-red-500' : 'text-emerald-600'
+                                                        }`}>
+                                                        {item.tipo === 'Sangria' ? '−' : '+'}&nbsp;R$&nbsp;{(item.valor || 0).toFixed(2)}
+                                                    </td>
+                                                    <td className={`py-4 px-6 text-right text-sm ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                                                        {item.responsavel || 'Operador'}
+                                                    </td>
                                                 </tr>
                                             ))}
-                                            {activeOrders.map(o => (
-                                                <tr key={o.id} className={isDark ? 'hover:bg-white/5' : 'hover:bg-slate-50'}>
-                                                    <td className={`py-3 px-4 font-mono ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{new Date(o.createdAt).toLocaleTimeString()}</td>
-                                                    <td className="py-3 px-4">
-                                                        <span className="px-2 py-1 rounded text-xs font-bold bg-emerald-500/10 text-emerald-500">
-                                                            VENDA #{o.displayId}
-                                                        </span>
+
+                                            {activeOrders.map((o, idx) => (
+                                                <tr
+                                                    key={`ord-${o.id}`}
+                                                    className={`border-b transition-colors ${isDark
+                                                        ? `border-white/5 ${(movimentacoes.length + idx) % 2 === 0 ? '' : 'bg-white/[0.02]'} hover:bg-white/[0.04]`
+                                                        : `border-slate-100 ${(movimentacoes.length + idx) % 2 === 0 ? '' : 'bg-slate-50/50'} hover:bg-blue-50/30`
+                                                        }`}
+                                                >
+                                                    <td className={`py-4 px-6 text-sm font-medium ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                                                        {o.createdAt
+                                                            ? new Date(o.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                                                            : '--:--'}
                                                     </td>
-                                                    <td className={`py-3 px-4 ${isDark ? 'text-white' : 'text-slate-800'}`}>
-                                                        Pagamento em {o.paymentMethod}
+                                                    <td className="py-4 px-6">
+                                                        <div className="flex justify-center">
+                                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wide bg-blue-500/10 text-blue-600 border border-blue-500/20">
+                                                                <ShoppingBag size={13} />
+                                                                VENDA #{o.displayId || '---'}
+                                                            </span>
+                                                        </div>
                                                     </td>
-                                                    <td className="py-3 px-4 text-right font-bold text-emerald-500">
-                                                        + R$ {o.total.toFixed(2)}
+                                                    <td className={`py-4 px-6 text-sm font-semibold ${isDark ? 'text-white' : 'text-slate-800'}`}>
+                                                        Pagamento em&nbsp;<span className="font-black">{o.paymentMethod || 'N/A'}</span>
                                                     </td>
-                                                    <td className={`py-3 px-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Caixa</td>
+                                                    <td className="py-4 px-6 text-right text-sm font-black tabular-nums text-blue-600">
+                                                        +&nbsp;R$&nbsp;{(o.total || 0).toFixed(2)}
+                                                    </td>
+                                                    <td className={`py-4 px-6 text-right text-sm ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                                                        Balcão
+                                                    </td>
                                                 </tr>
                                             ))}
                                         </>
                                     ) : (
                                         <tr>
-                                            <td colSpan={5} className="py-8 text-center text-slate-500">Nenhuma movimentação registrada hoje.</td>
+                                            <td colSpan={5}>
+                                                <div className={`flex flex-col items-center justify-center py-16 gap-3 ${isDark ? 'text-slate-600' : 'text-slate-300'}`}>
+                                                    <TrendingUp size={40} strokeWidth={1} />
+                                                    <p className={`text-sm font-medium ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Nenhuma movimentação registrada neste turno.</p>
+                                                </div>
+                                            </td>
                                         </tr>
                                     )}
                                 </tbody>

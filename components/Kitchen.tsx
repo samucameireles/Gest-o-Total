@@ -27,7 +27,7 @@ export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitc
   const getCardStyle = (minutes: number) => minutes > 20 ? 'border-l-danger bg-red-50' : minutes > 10 ? 'border-l-highlight bg-yellow-50' : 'border-l-success bg-white';
 
   return (
-    <div className="grid grid-cols-2 gap-8 h-full overflow-hidden">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 h-full overflow-hidden">
 
       {/* Column 1: EM PREPARAÇÃO */}
       <div className="flex flex-col h-full bg-white rounded-3xl shadow-premium border border-border overflow-hidden">

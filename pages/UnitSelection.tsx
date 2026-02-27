@@ -10,6 +10,7 @@ interface Tenant {
     id: string;
     name: string;
     slug: string;
+    logo_url?: string;
     role: string;
 }
 
@@ -39,7 +40,7 @@ export default function UnitSelection() {
         // Join user_roles to tenants
         const { data, error } = await supabase
             .from('user_roles')
-            .select('role, tenants(id, name, slug)')
+            .select('role, tenants(id, name, slug, logo_url)')
             .eq('user_id', user?.id);
 
         if (data) {
@@ -47,6 +48,7 @@ export default function UnitSelection() {
                 id: item.tenants.id,
                 name: item.tenants.name,
                 slug: item.tenants.slug,
+                logo_url: item.tenants.logo_url,
                 role: item.role
             }));
             setTenants(formatted);
@@ -138,11 +140,15 @@ export default function UnitSelection() {
                                 {isDark && <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>}
 
                                 <div className="relative mb-6">
-                                    <div className={`w-24 h-24 rounded-full flex items-center justify-center transition-transform duration-500 group-hover:scale-110 border ${isDark
+                                    <div className={`w-24 h-24 rounded-full flex items-center justify-center transition-transform duration-500 group-hover:scale-110 border overflow-hidden ${isDark
                                         ? 'bg-gradient-to-br from-blue-600/20 to-indigo-600/20 border-white/10'
                                         : 'bg-blue-50 border-blue-100'
                                         }`}>
-                                        <Store className="text-blue-500" size={40} />
+                                        {tenant.logo_url ? (
+                                            <img src={tenant.logo_url} alt={tenant.name} className="w-full h-full object-cover" />
+                                        ) : (
+                                            <Store className="text-blue-500" size={40} />
+                                        )}
                                     </div>
                                     <div className={`absolute -bottom-1 -right-1 w-6 h-6 bg-emerald-500 border-4 rounded-full shadow-[0_0_15px_rgba(16,185,129,0.5)] ${isDark ? 'border-[#0D0D10]' : 'border-white'}`}></div>
                                 </div>
