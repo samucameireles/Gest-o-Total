@@ -1056,11 +1056,72 @@ export default function Dashboard() {
             if (data) {
                 setAddOns(prev => [...prev, data as any]);
                 if (applyToAll) {
-                    await supabase.from('products').update({
-                        // Note: This assumes allowed_addons is an array in DB.
-                        // I'll skip local state sync for "applyToAll" to keep it simple for now, 
-                        // or just tell the user to refresh if needed.
-                    }).eq('tenant_id', selectedUnit.id);
+                    // 1. Filtragem Rigorosa e 2. Bloqueio de Itens
+                    const validCategories = categorias.filter(c =>
+                        c.label.toLowerCase().includes('hamburguer') ||
+                        c.label.toLowerCase().includes('hambúrguer') ||
+                        c.label.toLowerCase().includes('lanche') ||
+                        c.label.toLowerCase().includes('burger')
+                    ).map(c => c.id);
+
+                    const blockedCategories = categorias.filter(c =>
+                        c.label.toLowerCase().includes('bebida') ||
+                        c.label.toLowerCase().includes('porção') ||
+                        c.label.toLowerCase().includes('porcoes') ||
+                        c.label.toLowerCase().includes('sobremesa') ||
+                        c.label.toLowerCase().includes('acomp')
+                    ).map(c => c.id);
+
+                    const { data: targetProducts, error: prodErr } = await supabase
+                        .from('products')
+                        .select('id, allowed_add_ons, category')
+                        .eq('tenant_id', selectedUnit.id)
+                        .in('category', validCategories); // Filtragem Rigorosa pelo schema
+
+                    if (prodErr) throw prodErr;
+
+                    // 3. Mapeamento de IDs: Ignorar 100% as categorias bloqueadas
+                    const filteredProducts = (targetProducts || []).filter(p => !blockedCategories.includes(p.category));
+
+                    if (filteredProducts.length > 0) {
+                        // 4. Inserção em Lote (Bulk Insert) na tabela pivot product_addons
+                        const pivotInserts = filteredProducts.map(p => ({
+                            product_id: p.id,
+                            addon_id: data.id,
+                            tenant_id: selectedUnit.id
+                        }));
+
+                        const { error: pivotErr } = await supabase.from('product_addons').insert(pivotInserts);
+                        if (pivotErr) {
+                            console.error('Erro no Bulk Insert da tabela pivot:', pivotErr);
+                        }
+
+                        // Também atualiza o JSONB `allowed_add_ons` na tabela products usando chamadas paralelas
+                        await Promise.all(filteredProducts.map(p => {
+                            const currentAddOns = Array.isArray(p.allowed_add_ons) ? p.allowed_add_ons : [];
+                            return supabase.from('products').update({
+                                allowed_add_ons: [...currentAddOns, data.id]
+                            }).eq('id', p.id);
+                        }));
+
+                        // 5. Feedback de Sucesso e Atualização do Estado da Tela
+                        const targetProductIds = filteredProducts.map(p => p.id);
+                        setProducts(prev => prev.map(p => {
+                            if (targetProductIds.includes(p.id)) {
+                                return {
+                                    ...p,
+                                    allowedAddOns: [...(p.allowedAddOns || []), data.id]
+                                };
+                            }
+                            return p;
+                        }));
+
+                        alert(`Sucesso! Adicional vinculado a ${filteredProducts.length} hambúrgueres/lanches.`);
+                    } else {
+                        alert('Adicional criado, mas não encontramos lanches/hambúrgueres para vinculação.');
+                    }
+                } else {
+                    alert('Adicional criado com sucesso!');
                 }
             }
         } catch (err: any) {
