@@ -14,6 +14,7 @@ export interface Customer {
   phone: string;
   street: string;
   number: string;
+  complement?: string;
   neighborhood: string;
   lastOrder?: number;
 }
@@ -61,7 +62,7 @@ export type RecipeMap = Record<string, RecipeItem[]>;
 
 export type OrderStatus = 'OPEN' | 'PREPARING' | 'READY' | 'DELIVERED' | 'CANCELLED' | 'ARCHIVED';
 export type PaymentMethod = 'CREDIT' | 'DEBIT' | 'CASH' | 'PIX' | 'PENDING';
-export type OrderType = 'DINE_IN' | 'DELIVERY';
+export type OrderType = 'DINE_IN' | 'DELIVERY' | 'PICKUP';
 
 export interface DeliveryDetails {
   customerName: string;
@@ -133,6 +134,7 @@ export interface StoreSettings {
     forceClose?: boolean;
     minimumOrder: number;
     estimatedDeliveryTime: string;
+    allowedOrderTypes?: 'DELIVERY' | 'PICKUP' | 'BOTH' | 'VIEW_ONLY';
   };
 }
 

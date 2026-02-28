@@ -55,6 +55,113 @@ export default function Dashboard() {
 
     const isDark = theme === 'dark';
 
+    // --- Unit-Scoped State (Legacy LocalStorage for now) ---
+    const [orders, setOrders] = useState<Order[]>([]);
+    const [orderSequence, setOrderSequence] = useState<number>(1);
+    const [inventory, setInventory] = useState<Ingredient[]>([]);
+    const [products, setProducts] = useState<Product[]>([]);
+    const [drivers, setDrivers] = useState<Driver[]>([]);
+    const [neighborhoodFees, setNeighborhoodFees] = useState<NeighborhoodFee[]>([]);
+    const [storeSettings, setStoreSettings] = useState<StoreSettings>({ name: '', logoUrl: '' });
+    const [customers, setCustomers] = useState<Customer[]>([]);
+    const [coupons, setCoupons] = useState<Coupon[]>([]);
+    const [wasteLogs, setWasteLogs] = useState<WasteLog[]>([]);
+    const [addOns, setAddOns] = useState<AddOn[]>([]);
+    const [categorias, setCategorias] = useState<{ id: string, label: string }[]>([]);
+
+    const fetchOrders = React.useCallback(async () => {
+        if (!tenantId) return;
+        const { data: ords } = await supabase
+            .from('orders')
+            .select(`
+                *,
+                order_items (
+                    *,
+                    products (*),
+                    order_item_addons (
+                        *,
+                        addons (*)
+                    )
+                )
+            `)
+            .eq('tenant_id', tenantId)
+            .neq('status', 'ARCHIVED')
+            .order('created_at', { ascending: false });
+
+        if (ords) {
+            const mappedOrders: Order[] = ords.map(o => ({
+                id: o.id,
+                displayId: o.display_id,
+                total: o.total,
+                discount: o.discount,
+                status: o.status,
+                type: o.type,
+                isPaid: o.is_paid,
+                kitchenDismissed: o.kitchen_dismissed,
+                deliveryDetails: o.delivery_details,
+                paymentMethod: o.payment_method,
+                createdAt: new Date(o.created_at).getTime(),
+                assignedDriverId: o.driver_id,
+                customerName: o.customer_name || (o.type === 'DELIVERY' ? o.delivery_details?.customerName : ''),
+                tableName: o.table_name,
+                receivedAmount: o.received_amount,
+                changeAmount: o.change_amount,
+                deliveryFee: o.delivery_fee || 0,
+                items: (o.order_items || []).map((oi: any) => ({
+                    ...oi.products,
+                    cartId: oi.id,
+                    quantity: oi.quantity,
+                    price: oi.price_at_time,
+                    notes: oi.notes,
+                    selectedAddOns: (oi.order_item_addons || []).map((oia: any) => ({
+                        ...oia.addons,
+                        price: oia.price_at_time
+                    }))
+                }))
+            }));
+            setOrders(mappedOrders);
+
+            // Synchronize Order Sequence
+            const maxId = ords.reduce((max, o) => Math.max(max, o.display_id), 0);
+            setOrderSequence(maxId + 1);
+        }
+    }, [tenantId]);
+
+    // Real-time Updates Effect
+    useEffect(() => {
+        if (!tenantId) return;
+
+        // Initial fetch handled by main useEffect, but we could also put it here
+        // to be completely isolated. However, keeping logic centralized is better.
+
+        const channel = supabase
+            .channel(`dashboard-orders-global`)
+            .on(
+                'postgres_changes',
+                {
+                    event: '*',
+                    schema: 'public',
+                    table: 'orders'
+                },
+                (payload: any) => {
+                    console.log('Realtime change detected:', payload);
+                    // Check if the change belongs to this tenant
+                    const newOrder = payload.new;
+                    const oldOrder = payload.old;
+                    if ((newOrder && newOrder.tenant_id === tenantId) || (oldOrder && oldOrder.tenant_id === tenantId)) {
+                        fetchOrders();
+                    }
+                }
+            )
+            .subscribe((status) => {
+                console.log(`Realtime subscription status:`, status);
+            });
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [tenantId, fetchOrders]);
+
     // --- Initialize Tenant Context ---
     useEffect(() => {
         const fetchTenantData = async () => {
@@ -110,61 +217,7 @@ export default function Dashboard() {
                     const { data: wst } = await supabase.from('waste_logs').select('*').eq('tenant_id', tenantId).order('date', { ascending: false });
                     if (wst) setWasteLogs(wst.map(w => ({ ...w, ingredientName: w.ingredient_name, date: w.date })) as any);
 
-                    // Fetch Orders — scoped to this tenant
-                    const { data: ords } = await supabase
-                        .from('orders')
-                        .select(`
-                            *,
-                            order_items (
-                                *,
-                                products (*),
-                                order_item_addons (
-                                    *,
-                                    addons (*)
-                                )
-                            )
-                        `)
-                        .eq('tenant_id', tenantId)
-                        .neq('status', 'ARCHIVED')
-                        .order('created_at', { ascending: false });
-
-                    if (ords) {
-                        const mappedOrders: Order[] = ords.map(o => ({
-                            id: o.id,
-                            displayId: o.display_id,
-                            total: o.total,
-                            discount: o.discount,
-                            status: o.status,
-                            type: o.type,
-                            isPaid: o.is_paid,
-                            kitchenDismissed: o.kitchen_dismissed,
-                            deliveryDetails: o.delivery_details,
-                            paymentMethod: o.payment_method,
-                            createdAt: new Date(o.created_at).getTime(),
-                            assignedDriverId: o.driver_id,
-                            customerName: o.customer_name || (o.type === 'DELIVERY' ? o.delivery_details?.customerName : ''),
-                            tableName: o.table_name,
-                            receivedAmount: o.received_amount,
-                            changeAmount: o.change_amount,
-                            deliveryFee: o.delivery_fee || 0,
-                            items: (o.order_items || []).map((oi: any) => ({
-                                ...oi.products,
-                                cartId: oi.id,
-                                quantity: oi.quantity,
-                                price: oi.price_at_time,
-                                notes: oi.notes,
-                                selectedAddOns: (oi.order_item_addons || []).map((oia: any) => ({
-                                    ...oia.addons,
-                                    price: oia.price_at_time
-                                }))
-                            }))
-                        }));
-                        setOrders(mappedOrders);
-
-                        // Synchronize Order Sequence
-                        const maxId = ords.reduce((max, o) => Math.max(max, o.display_id), 0);
-                        setOrderSequence(maxId + 1);
-                    }
+                    await fetchOrders();
 
                     // Fetch Cash Sessions — scoped to this tenant
                     const { data: scs } = await supabase
@@ -238,18 +291,6 @@ export default function Dashboard() {
 
 
     // --- Unit-Scoped State (Legacy LocalStorage for now) ---
-    const [orders, setOrders] = useState<Order[]>([]);
-    const [orderSequence, setOrderSequence] = useState<number>(1);
-    const [inventory, setInventory] = useState<Ingredient[]>([]);
-    const [products, setProducts] = useState<Product[]>([]);
-    const [drivers, setDrivers] = useState<Driver[]>([]);
-    const [neighborhoodFees, setNeighborhoodFees] = useState<NeighborhoodFee[]>([]);
-    const [storeSettings, setStoreSettings] = useState<StoreSettings>({ name: '', logoUrl: '' });
-    const [customers, setCustomers] = useState<Customer[]>([]);
-    const [coupons, setCoupons] = useState<Coupon[]>([]);
-    const [wasteLogs, setWasteLogs] = useState<WasteLog[]>([]);
-    const [addOns, setAddOns] = useState<AddOn[]>([]);
-    const [categorias, setCategorias] = useState<{ id: string, label: string }[]>([]);
 
     // --- Persistence Helpers ---
     // (load/save functions removed as we are now fully integrated with Supabase)
@@ -269,6 +310,7 @@ export default function Dashboard() {
         phone: '',
         street: '',
         number: '',
+        complement: '',
         neighborhood: ''
     });
     const [dineInName, setDineInName] = useState('');
@@ -280,15 +322,27 @@ export default function Dashboard() {
 
     // --- POS Persistence Effects ---
     useEffect(() => {
-        const savedCart = localStorage.getItem('gestao_total_pos_cart');
-        const savedOrderType = localStorage.getItem('gestao_total_pos_orderType');
-        const savedDeliveryForm = localStorage.getItem('gestao_total_pos_deliveryForm');
-        const savedDineInName = localStorage.getItem('gestao_total_pos_dineInName');
-        const savedSelectedCustomer = localStorage.getItem('gestao_total_pos_selectedCustomer');
-        const savedShowCheckout = localStorage.getItem('gestao_total_pos_showCheckout');
-        const savedPaymentMethod = localStorage.getItem('gestao_total_pos_paymentMethod');
-        const savedAppliedCoupon = localStorage.getItem('gestao_total_pos_appliedCoupon');
-        const savedReceivedAmountStr = localStorage.getItem('gestao_total_pos_receivedAmountStr');
+        if (!tenantId) return;
+
+        const cartKey = `gestao_total_pos_${tenantId}_cart`;
+        const typeKey = `gestao_total_pos_${tenantId}_orderType`;
+        const formKey = `gestao_total_pos_${tenantId}_deliveryForm`;
+        const nameKey = `gestao_total_pos_${tenantId}_dineInName`;
+        const custKey = `gestao_total_pos_${tenantId}_selectedCustomer`;
+        const checkoutKey = `gestao_total_pos_${tenantId}_showCheckout`;
+        const payKey = `gestao_total_pos_${tenantId}_paymentMethod`;
+        const couponKey = `gestao_total_pos_${tenantId}_appliedCoupon`;
+        const amountKey = `gestao_total_pos_${tenantId}_receivedAmountStr`;
+
+        const savedCart = localStorage.getItem(cartKey);
+        const savedOrderType = localStorage.getItem(typeKey);
+        const savedDeliveryForm = localStorage.getItem(formKey);
+        const savedDineInName = localStorage.getItem(nameKey);
+        const savedSelectedCustomer = localStorage.getItem(custKey);
+        const savedShowCheckout = localStorage.getItem(checkoutKey);
+        const savedPaymentMethod = localStorage.getItem(payKey);
+        const savedAppliedCoupon = localStorage.getItem(couponKey);
+        const savedReceivedAmountStr = localStorage.getItem(amountKey);
 
         if (savedCart && savedCart !== 'undefined') setCart(JSON.parse(savedCart));
         if (savedOrderType) setOrderType(savedOrderType as OrderType);
@@ -299,20 +353,31 @@ export default function Dashboard() {
         if (savedPaymentMethod) setPaymentMethod(savedPaymentMethod as PaymentMethod);
         if (savedAppliedCoupon && savedAppliedCoupon !== 'undefined') setAppliedCoupon(JSON.parse(savedAppliedCoupon));
         if (savedReceivedAmountStr) setReceivedAmountStr(savedReceivedAmountStr);
-    }, []);
+    }, [tenantId]);
 
     useEffect(() => {
-        localStorage.setItem('gestao_total_pos_cart', JSON.stringify(cart));
-        localStorage.setItem('gestao_total_pos_orderType', orderType);
-        localStorage.setItem('gestao_total_pos_deliveryForm', JSON.stringify(deliveryForm));
-        localStorage.setItem('gestao_total_pos_dineInName', dineInName);
-        localStorage.setItem('gestao_total_pos_selectedCustomer', JSON.stringify(selectedCustomer));
-        localStorage.setItem('gestao_total_pos_showCheckout', showCheckout.toString());
-        localStorage.setItem('gestao_total_pos_paymentMethod', paymentMethod);
-        localStorage.setItem('gestao_total_pos_receivedAmountStr', receivedAmountStr);
-        if (appliedCoupon) localStorage.setItem('gestao_total_pos_appliedCoupon', JSON.stringify(appliedCoupon));
-        else localStorage.removeItem('gestao_total_pos_appliedCoupon');
-    }, [cart, orderType, deliveryForm, dineInName, selectedCustomer, showCheckout, paymentMethod, appliedCoupon, receivedAmountStr]);
+        if (!tenantId) return;
+
+        const cartKey = `gestao_total_pos_${tenantId}_cart`;
+        const typeKey = `gestao_total_pos_${tenantId}_orderType`;
+        const formKey = `gestao_total_pos_${tenantId}_deliveryForm`;
+        const nameKey = `gestao_total_pos_${tenantId}_dineInName`;
+        const custKey = `gestao_total_pos_${tenantId}_selectedCustomer`;
+        const checkoutKey = `gestao_total_pos_${tenantId}_showCheckout`;
+        const payKey = `gestao_total_pos_${tenantId}_paymentMethod`;
+        const couponKey = `gestao_total_pos_${tenantId}_appliedCoupon`;
+        const amountKey = `gestao_total_pos_${tenantId}_receivedAmountStr`;
+
+        localStorage.setItem(cartKey, JSON.stringify(cart));
+        localStorage.setItem(typeKey, orderType);
+        localStorage.setItem(formKey, JSON.stringify(deliveryForm));
+        localStorage.setItem(nameKey, dineInName);
+        localStorage.setItem(custKey, JSON.stringify(selectedCustomer));
+        localStorage.setItem(checkoutKey, String(showCheckout));
+        localStorage.setItem(payKey, paymentMethod);
+        localStorage.setItem(couponKey, JSON.stringify(appliedCoupon));
+        localStorage.setItem(amountKey, receivedAmountStr);
+    }, [cart, orderType, deliveryForm, dineInName, selectedCustomer, showCheckout, paymentMethod, appliedCoupon, receivedAmountStr, tenantId]);
 
     const resetPOSState = () => {
         setCart([]);
@@ -329,14 +394,17 @@ export default function Dashboard() {
         setShowCheckout(false);
         setPaymentMethod('CREDIT');
         setReceivedAmountStr('');
-        localStorage.removeItem('gestao_total_pos_cart');
-        localStorage.removeItem('gestao_total_pos_deliveryForm');
-        localStorage.removeItem('gestao_total_pos_dineInName');
-        localStorage.removeItem('gestao_total_pos_selectedCustomer');
-        localStorage.removeItem('gestao_total_pos_showCheckout');
-        localStorage.removeItem('gestao_total_pos_paymentMethod');
-        localStorage.removeItem('gestao_total_pos_appliedCoupon');
-        localStorage.removeItem('gestao_total_pos_receivedAmountStr');
+
+        if (tenantId) {
+            localStorage.removeItem(`gestao_total_pos_${tenantId}_cart`);
+            localStorage.removeItem(`gestao_total_pos_${tenantId}_deliveryForm`);
+            localStorage.removeItem(`gestao_total_pos_${tenantId}_dineInName`);
+            localStorage.removeItem(`gestao_total_pos_${tenantId}_selectedCustomer`);
+            localStorage.removeItem(`gestao_total_pos_${tenantId}_showCheckout`);
+            localStorage.removeItem(`gestao_total_pos_${tenantId}_paymentMethod`);
+            localStorage.removeItem(`gestao_total_pos_${tenantId}_appliedCoupon`);
+            localStorage.removeItem(`gestao_total_pos_${tenantId}_receivedAmountStr`);
+        }
     };
 
     useEffect(() => {
@@ -640,7 +708,7 @@ export default function Dashboard() {
             // Clear POS State logic
             setCart([]);
             setOrderType('DINE_IN');
-            setDeliveryForm({ customerName: '', phone: '', street: '', number: '', neighborhood: '' });
+            setDeliveryForm({ customerName: '', phone: '', street: '', number: '', complement: '', neighborhood: '' });
             setDineInName('');
             setSelectedCustomer(undefined);
             setAppliedCoupon(undefined);
@@ -996,6 +1064,7 @@ export default function Dashboard() {
                 phone: c.phone,
                 street: c.street,
                 number: c.number,
+                complement: c.complement,
                 neighborhood: c.neighborhood,
                 tenant_id: selectedUnit.id
             }]).select().single();
@@ -1328,7 +1397,10 @@ export default function Dashboard() {
                 activeTab={activeTab}
                 setActiveTab={setActiveTab}
                 selectedUnitName={selectedUnit.name}
-                onChangeUnit={() => navigate('/')}
+                onChangeUnit={() => {
+                    setTenant(''); // Clear RLS context
+                    navigate('/?manual=true');
+                }}
                 settings={storeSettings}
                 isOpen={sidebarOpen}
                 setIsOpen={setSidebarOpen}

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase, setTenant } from '../lib/supabase';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { Store, Plus, ArrowRight, LogOut, Loader2, Sun, Moon } from 'lucide-react';
@@ -22,6 +22,7 @@ export default function UnitSelection() {
     const [creating, setCreating] = useState(false);
     const [newStoreName, setNewStoreName] = useState('');
     const navigate = useNavigate();
+    const location = useLocation();
 
     const isDark = theme === 'dark';
 
@@ -52,6 +53,23 @@ export default function UnitSelection() {
                 role: item.role
             }));
             setTenants(formatted);
+
+            // AUTO-REDIRECT LOGIC
+            const searchParams = new URLSearchParams(location.search);
+            const isManual = searchParams.get('manual') === 'true';
+
+            if (!isManual && formatted.length > 0) {
+                const lastTenantId = localStorage.getItem('last_tenant_id');
+
+                // If only one unit, or if the last unit is in the list, redirect.
+                if (formatted.length === 1) {
+                    handleSelectStore(formatted[0].id);
+                    return;
+                } else if (lastTenantId && formatted.some(t => t.id === lastTenantId)) {
+                    handleSelectStore(lastTenantId);
+                    return;
+                }
+            }
         }
         setLoading(false);
     };
@@ -81,6 +99,7 @@ export default function UnitSelection() {
 
     const handleSelectStore = (id: string) => {
         setTenant(id);
+        localStorage.setItem('last_tenant_id', id);
         navigate(`/dashboard/${id}`);
     };
 

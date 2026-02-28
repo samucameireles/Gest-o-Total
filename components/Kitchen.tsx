@@ -45,7 +45,7 @@ export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitc
                   <div>
                     <span className="font-heading font-black text-2xl text-textPrimary">#{order.displayId}</span>
                     <span className="text-xs uppercase font-bold text-textSecondary ml-2">
-                      {order.type === 'DINE_IN' ? 'MESA' : 'DELIVERY'}
+                      {order.type === 'DINE_IN' ? 'MESA' : order.type === 'PICKUP' ? 'RETIRADA' : 'DELIVERY'}
                     </span>
                   </div>
                   <div className="text-right">
@@ -58,7 +58,7 @@ export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitc
                   <div className="mb-3 bg-blue-50 p-2 rounded-lg border border-blue-100">
                     <p className="font-bold text-sm text-textPrimary leading-tight">{order.customerName}</p>
                     <div className="flex flex-wrap items-center gap-1 mt-1 text-xs text-textSecondary">
-                      <span>{order.deliveryDetails?.street}, {order.deliveryDetails?.number}</span>
+                      <span>{order.deliveryDetails?.street}, {order.deliveryDetails?.number} {order.deliveryDetails?.complement ? `- ${order.deliveryDetails.complement}` : ''}</span>
                       {order.deliveryDetails?.neighborhood && (
                         <span className="font-black text-blue-700 bg-blue-100 border border-blue-200 px-1.5 rounded uppercase">{order.deliveryDetails.neighborhood}</span>
                       )}
@@ -112,12 +112,12 @@ export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitc
           {readyOrders.map(order => (
             <div key={order.id} className="bg-white border border-border rounded-xl shadow-sm p-4 relative overflow-hidden group">
               {/* Color Coded Tag */}
-              <div className={`absolute top-0 left-0 right-0 h-1.5 ${order.type === 'DINE_IN' ? 'bg-blue-500' : 'bg-orange-500'}`}></div>
+              <div className={`absolute top-0 left-0 right-0 h-1.5 ${order.type === 'DINE_IN' ? 'bg-blue-500' : order.type === 'PICKUP' ? 'bg-green-500' : 'bg-orange-500'}`}></div>
 
               <div className="flex justify-between items-center mb-3 mt-2">
                 <span className="font-heading font-black text-2xl text-textPrimary">#{order.displayId}</span>
-                <span className={`text-[10px] font-black px-2 py-1 rounded uppercase tracking-wider ${order.type === 'DINE_IN' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
-                  {order.type === 'DINE_IN' ? 'MESA' : 'DELIVERY'}
+                <span className={`text-[10px] font-black px-2 py-1 rounded uppercase tracking-wider ${order.type === 'DINE_IN' ? 'bg-blue-100 text-blue-700' : order.type === 'PICKUP' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                  {order.type === 'DINE_IN' ? 'MESA' : order.type === 'PICKUP' ? 'RETIRADA' : 'DELIVERY'}
                 </span>
               </div>
 
@@ -125,8 +125,8 @@ export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitc
                 <p className="font-bold text-textPrimary text-sm">{order.type === 'DINE_IN' ? (order.tableName ? `Mesa: ${order.tableName}` : order.customerName) : order.customerName}</p>
                 {order.type === 'DELIVERY' && (
                   <div className="text-xs text-textSecondary overflow-hidden mt-1 bg-white p-2 rounded border border-gray-100">
-                    <p className="truncate font-medium">{order.deliveryDetails ? `${order.deliveryDetails.street}, ${order.deliveryDetails.number}` : ''}</p>
-                    {order.deliveryDetails?.complement && <p className="truncate text-[10px] text-gray-500">{order.deliveryDetails.complement}</p>}
+                    <p className="truncate font-medium">{order.deliveryDetails ? `${order.deliveryDetails.street}, ${order.deliveryDetails.number} ${order.deliveryDetails.complement ? `- ${order.deliveryDetails.complement}` : ''}` : ''}</p>
+                    {order.deliveryDetails?.complement && <p className="truncate text-xs text-amber-600 font-bold">{order.deliveryDetails.complement}</p>}
                     {/* V13: Highlight Neighborhood */}
                     {order.deliveryDetails?.neighborhood && <p className="font-black text-blue-600 bg-blue-50 px-2 py-1 rounded inline-block mt-1 uppercase text-[10px]">{order.deliveryDetails.neighborhood}</p>}
                   </div>

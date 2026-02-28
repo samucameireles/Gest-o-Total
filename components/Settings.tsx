@@ -41,6 +41,7 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
   const [forceClose, setForceClose] = useState(settings.menu?.forceClose || false);
   const [minimumOrder, setMinimumOrder] = useState(settings.menu?.minimumOrder || 0);
   const [estimatedDeliveryTime, setEstimatedDeliveryTime] = useState(settings.menu?.estimatedDeliveryTime || '40-50 min');
+  const [allowedOrderTypes, setAllowedOrderTypes] = useState<'DELIVERY' | 'PICKUP' | 'BOTH' | 'VIEW_ONLY'>(settings.menu?.allowedOrderTypes || 'BOTH');
 
   const [slug, setSlug] = useState('');
   const [menuEnabled, setMenuEnabled] = useState(true);
@@ -92,7 +93,7 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
     setTimeout(() => setSlugCopied(false), 2000);
   };
 
-  const handleSave = () => { onUpdateSettings({ name, logoUrl: logo, themeColor, address, googleMapsUrl, operatingHours, menu: { openingTime, closingTime, forceClose, minimumOrder, estimatedDeliveryTime } }); alert('Salvo!'); };
+  const handleSave = () => { onUpdateSettings({ name, logoUrl: logo, themeColor, address, googleMapsUrl, operatingHours, menu: { openingTime, closingTime, forceClose, minimumOrder, estimatedDeliveryTime, allowedOrderTypes } }); alert('Salvo!'); };
   const handleAddCoupon = () => { if (newCode && newPercent) { onAddCoupon(newCode.toUpperCase(), parseFloat(newPercent)); setNewCode(''); setNewPercent(''); } };
 
   const handleCreateCashier = async () => {
@@ -449,6 +450,16 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1">Tempo Estimado</label>
                   <input type="text" placeholder="Ex: 40-50 min" value={estimatedDeliveryTime} onChange={e => setEstimatedDeliveryTime(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none focus:border-accent" />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">Tipos de Pedidos</label>
+                  <select value={allowedOrderTypes} onChange={e => setAllowedOrderTypes(e.target.value as 'DELIVERY' | 'PICKUP' | 'BOTH' | 'VIEW_ONLY')} className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none focus:border-accent font-bold text-slate-700 text-sm">
+                    <option value="BOTH">Delivery e Retirada</option>
+                    <option value="DELIVERY">Apenas Delivery</option>
+                    <option value="PICKUP">Apenas Retirada</option>
+                    <option value="VIEW_ONLY">Apenas Visualização</option>
+                  </select>
                 </div>
               </div>
 

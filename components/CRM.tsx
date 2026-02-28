@@ -14,6 +14,7 @@ export const CRM: React.FC<CRMProps> = ({ customers, onAddCustomer, onRemoveCust
   const [newPhone, setNewPhone] = useState('');
   const [newStreet, setNewStreet] = useState('');
   const [newNumber, setNewNumber] = useState('');
+  const [newComplement, setNewComplement] = useState('');
   const [newNeighborhood, setNewNeighborhood] = useState('');
 
   const filtered = customers.filter(c =>
@@ -28,12 +29,14 @@ export const CRM: React.FC<CRMProps> = ({ customers, onAddCustomer, onRemoveCust
         phone: newPhone,
         street: newStreet,
         number: newNumber,
+        complement: newComplement,
         neighborhood: newNeighborhood
       });
       setNewName('');
       setNewPhone('');
       setNewStreet('');
       setNewNumber('');
+      setNewComplement('');
       setNewNeighborhood('');
     }
   };
@@ -63,7 +66,7 @@ export const CRM: React.FC<CRMProps> = ({ customers, onAddCustomer, onRemoveCust
                 <h3 className="font-bold text-textPrimary text-lg">{c.name}</h3>
                 <div className="flex items-center gap-3 text-sm text-textSecondary mt-1">
                   <span className="flex items-center gap-1"><Phone size={12} /> {c.phone}</span>
-                  <span className="flex items-center gap-1"><MapPin size={12} /> {c.street}, {c.number} - {c.neighborhood}</span>
+                  <span className="flex items-center gap-1"><MapPin size={12} /> {c.street}, {c.number} {c.complement ? `- ${c.complement}` : ''} - {c.neighborhood}</span>
                 </div>
               </div>
               <button
@@ -101,8 +104,12 @@ export const CRM: React.FC<CRMProps> = ({ customers, onAddCustomer, onRemoveCust
             </div>
             <div className="w-[30%]">
               <label className="text-xs font-bold text-textSecondary mb-1 block">Número</label>
-              <input type="number" className="w-full bg-background border border-border rounded-xl p-3 outline-none focus:border-accent" value={newNumber} onChange={e => setNewNumber(e.target.value)} placeholder="123" />
+              <input type="text" className="w-full bg-background border border-border rounded-xl p-3 outline-none focus:border-accent" value={newNumber} onChange={e => setNewNumber(e.target.value)} placeholder="123" />
             </div>
+          </div>
+          <div>
+            <label className="text-xs font-bold text-textSecondary mb-1 block">Complemento (Apto, Bloco, etc)</label>
+            <input className="w-full bg-background border border-border rounded-xl p-3 outline-none focus:border-accent" value={newComplement} onChange={e => setNewComplement(e.target.value)} placeholder="Ex: Bloco A, Apto 101" />
           </div>
           <div>
             <label className="text-xs font-bold text-textSecondary mb-1 block">Bairro</label>

@@ -9,7 +9,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 // Active tenant ID for RLS header injection
-let activeTenantId = import.meta.env.VITE_TENANT_ID || ''
+let activeTenantId = localStorage.getItem('activeTenantId') || import.meta.env.VITE_TENANT_ID || ''
 
 // Create the Supabase client with a dynamic header getter
 export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '', {
@@ -30,8 +30,13 @@ export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '', {
  * This ensures RLS policies isolate data correctly per tenant.
  */
 export const setTenant = (id: string) => {
-    if (!id) return
+    if (!id) {
+        activeTenantId = ''
+        localStorage.removeItem('activeTenantId')
+        return
+    }
     activeTenantId = id
+    localStorage.setItem('activeTenantId', id)
     console.log(`[Supabase] Active Tenant: ${id}`)
 }
 

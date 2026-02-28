@@ -65,6 +65,7 @@ interface TenantInfo {
       forceClose?: boolean;
       minimumOrder: number;
       estimatedDeliveryTime: string;
+      allowedOrderTypes?: "DELIVERY" | "PICKUP" | "BOTH" | "VIEW_ONLY";
     };
     address?: string;
     googleMapsUrl?: string;
@@ -94,6 +95,7 @@ interface OrderForm {
   street: string;
   number: string;
   neighborhood: string;
+  complement: string;
   notes: string;
 }
 
@@ -104,11 +106,13 @@ interface Coupon {
   active: boolean;
 }
 
-const normalizeText = (text: string) =>
-  text
+const normalizeText = (text: string | null | undefined) => {
+  if (!text) return "";
+  return text
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+};
 
 export default function Menu() {
   const { slug } = useParams<{ slug: string }>();
@@ -141,6 +145,7 @@ export default function Menu() {
   const [paymentMethod, setPaymentMethod] = useState<
     "PIX" | "CASH" | "CREDIT" | "DEBIT"
   >("PIX");
+  const [deliveryType, setDeliveryType] = useState<"DELIVERY" | "PICKUP">("DELIVERY");
   const [showNeighborhoodSuggestions, setShowNeighborhoodSuggestions] =
     useState(false);
 
@@ -150,6 +155,7 @@ export default function Menu() {
     street: "",
     number: "",
     neighborhood: "",
+    complement: "",
     notes: "",
   });
 
@@ -186,6 +192,14 @@ export default function Menu() {
         }
 
         setTenant(tenantData);
+
+        if (tenantData.settings?.menu?.allowedOrderTypes === "PICKUP") {
+          setDeliveryType("PICKUP");
+        } else if (tenantData.settings?.menu?.allowedOrderTypes === "DELIVERY") {
+          setDeliveryType("DELIVERY");
+        } else {
+          setDeliveryType("DELIVERY"); // Default to Delivery if BOTH or undefined for better UX initially
+        }
 
         const tenantId = tenantData.id;
         setActiveScopeTenant(tenantId);
@@ -278,9 +292,50 @@ export default function Menu() {
     load();
   }, [slug]);
 
-  const canMakeProduct = (product: Product) => {
+  // Load from localStorage on mount
+  useEffect(() => {
+    const savedName = localStorage.getItem("customer_name");
+    const savedPhone = localStorage.getItem("customer_phone");
+    if (savedName || savedPhone) {
+      setForm((p) => ({
+        ...p,
+        customerName: savedName || p.customerName,
+        phone: savedPhone || p.phone,
+      }));
+    }
+  }, []);
+
+  // Customer Look-up Effect
+  useEffect(() => {
+    if (!tenant || !form.phone || form.phone.length < 3) return;
+
+    const lookupCustomer = async () => {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("tenant_id", tenant.id)
+        .eq("phone", form.phone)
+        .maybeSingle();
+
+      if (data && !error) {
+        setForm((p) => ({
+          ...p,
+          customerName: p.customerName || data.name,
+          street: p.street || data.street,
+          number: p.number || data.number,
+          neighborhood: p.neighborhood || data.neighborhood,
+          complement: p.complement || data.complement,
+        }));
+      }
+    };
+
+    const timer = setTimeout(lookupCustomer, 1000);
+    return () => clearTimeout(timer);
+  }, [form.phone, tenant?.id]);
+
+  const getStockStatus = (product: Product) => {
     const recipe = product.recipe || RECIPES[product.id];
-    if (!recipe || recipe.length === 0) return true;
+    if (!recipe || recipe.length === 0) return { available: true };
 
     const cartQty = cart
       .filter((i) => i.id === product.id)
@@ -288,15 +343,17 @@ export default function Menu() {
 
     for (const item of recipe) {
       const invItem = inventory.find((i) => i.id === item.ingredientId);
-      if (!invItem) return false;
-      if (invItem.currentStock < item.amount * (cartQty + 1)) {
-        return false;
+      if (!invItem || invItem.currentStock < item.amount * (cartQty + 1)) {
+        return {
+          available: false,
+          missingItem: invItem ? (invItem as any).name || 'Insumo' : 'Insumo'
+        };
       }
     }
-    return true;
+    return { available: true };
   };
 
-  const isAvailable = (product: Product) => canMakeProduct(product);
+  const isAvailable = (product: Product) => getStockStatus(product).available;
 
   const handleProductClick = (product: Product) => {
     if (!isAvailable(product)) return;
@@ -362,7 +419,7 @@ export default function Menu() {
 
   const handleApplyCoupon = () => {
     const coupon = coupons.find(
-      (c) => c.code.toLowerCase() === couponCode.toLowerCase() && c.active,
+      (c) => (c.code?.toLowerCase() || "") === couponCode.toLowerCase() && c.active,
     );
     if (coupon) {
       setAppliedCoupon(coupon);
@@ -385,7 +442,7 @@ export default function Menu() {
   const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
 
   const activeFee = neighborhoodFees.find((f) => f.name === form.neighborhood);
-  const deliveryFee = activeFee ? activeFee.price : 0;
+  const deliveryFee = deliveryType === "PICKUP" ? 0 : (activeFee ? activeFee.price : 0);
   const discountAmount = appliedCoupon
     ? cartTotal * (appliedCoupon.discountPercent / 100)
     : 0;
@@ -393,7 +450,7 @@ export default function Menu() {
 
   const filteredProducts = products.filter((p) => {
     const matchSearch =
-      !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase());
+      !searchQuery || (p.name?.toLowerCase() || "").includes(searchQuery.toLowerCase());
     return matchSearch;
   });
 
@@ -407,37 +464,98 @@ export default function Menu() {
 
   const handleSubmitOrder = async () => {
     if (!tenant) return;
-    if (
-      !form.customerName ||
-      !form.phone ||
-      !form.street ||
-      !form.number ||
-      !form.neighborhood
-    ) {
-      alert("Preencha todos os campos de entrega.");
+    if (!form.customerName || !form.phone) {
+      alert("Preencha Nome e WhatsApp.");
       return;
+    }
+    if (deliveryType === "DELIVERY") {
+      if (!form.street || !form.number || !form.neighborhood) {
+        alert("Preencha os dados do endereço de entrega.");
+        return;
+      }
+      const isNeighborhoodValid = neighborhoodFees.some(
+        (f) => f.name.toLowerCase() === form.neighborhood.toLowerCase()
+      );
+      if (!isNeighborhoodValid) {
+        alert("Entrega não disponível para o bairro informado.");
+        return;
+      }
     }
     if (cart.length === 0) return;
 
     setSubmitting(true);
     try {
+      // 1. Sync Customer with CRM and get customer_id
+      let customerId: string | undefined;
+      try {
+        const { data: existingCust } = await supabase
+          .from("customers")
+          .select("id")
+          .eq("tenant_id", tenant.id)
+          .eq("phone", form.phone)
+          .maybeSingle();
+
+        if (existingCust) {
+          customerId = existingCust.id;
+          await supabase
+            .from("customers")
+            .update({
+              name: form.customerName,
+              street: form.street,
+              number: form.number,
+              neighborhood: form.neighborhood,
+              complement: form.complement,
+              last_order_at: new Date().toISOString(),
+            })
+            .eq("id", existingCust.id);
+        } else {
+          const { data: newCust, error: custErr } = await supabase
+            .from("customers")
+            .insert({
+              tenant_id: tenant.id,
+              name: form.customerName,
+              phone: form.phone,
+              street: form.street,
+              number: form.number,
+              neighborhood: form.neighborhood,
+              complement: form.complement,
+              last_order_at: new Date().toISOString(),
+            })
+            .select("id")
+            .single();
+
+          if (!custErr && newCust) {
+            customerId = newCust.id;
+          }
+        }
+      } catch (crmErr) {
+        console.error("Error syncing with CRM:", crmErr);
+      }
+
+      // 2. Insert Order linking to customerId
       const { data: order, error: oe } = await supabase
         .from("orders")
         .insert({
           tenant_id: tenant.id,
+          customer_id: customerId, // Linked to CRM
           status: "PREPARING",
-          type: "DELIVERY",
+          type: deliveryType,
           total: finalTotal,
           discount: discountAmount,
           is_paid: false,
           display_id: Math.floor(Math.random() * 9000) + 1000,
           customer_name: form.customerName,
-          delivery_details: {
+          delivery_details: deliveryType === "DELIVERY" ? {
             customerName: form.customerName,
             phone: form.phone,
             street: form.street,
             number: form.number,
+            complement: form.complement,
             neighborhood: form.neighborhood,
+          } : {
+            customerName: form.customerName,
+            phone: form.phone,
+            pickup: true
           },
           delivery_notes: form.notes,
           delivery_fee: deliveryFee,
@@ -508,6 +626,10 @@ export default function Menu() {
       setCart([]);
       setShowCheckout(false);
       setShowCart(false);
+
+      // Save to localStorage for browser persistence
+      localStorage.setItem("customer_name", form.customerName);
+      localStorage.setItem("customer_phone", form.phone);
     } catch (err: any) {
       alert("Erro ao enviar pedido: " + err.message);
     } finally {
@@ -584,6 +706,7 @@ export default function Menu() {
 
   let isStoreOpen = true;
   let storeStatusMessage = "";
+  const isViewOnly = tenant.settings?.menu?.allowedOrderTypes === 'VIEW_ONLY';
 
   if (menuConfig) {
     if (menuConfig.forceClose) {
@@ -672,14 +795,23 @@ export default function Menu() {
       <div className="bg-slate-800 text-white border-b border-slate-700 py-2">
         <div className="max-w-6xl mx-auto px-4 flex items-center justify-between">
           <div className="flex items-center gap-2 text-xs font-medium">
-            <span className={`w-1.5 h-1.5 rounded-full ${isStoreOpen ? 'bg-emerald-400' : 'bg-red-400'}`}></span>
-            {menuConfig?.openingTime ? `Abre às ${menuConfig.openingTime}` : ''} {minimumOrder > 0 ? `• Mínimo R$ ${minimumOrder.toFixed(2).replace('.', ',')}` : '• Sem mínimo'} • {estimatedDeliveryTime}
+            {isViewOnly ? (
+              <span className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                Cardápio apenas para visualização
+              </span>
+            ) : (
+              <>
+                <span className={`w-1.5 h-1.5 rounded-full ${isStoreOpen ? 'bg-emerald-400' : 'bg-red-400'}`}></span>
+                {menuConfig?.openingTime ? `Abre às ${menuConfig.openingTime}` : ''} {minimumOrder > 0 ? `• Mínimo R$ ${minimumOrder.toFixed(2).replace('.', ',')}` : '• Sem mínimo'} • {estimatedDeliveryTime}
+              </>
+            )}
           </div>
           <button
             onClick={() => setShowProfileModal(true)}
             className="text-xs text-slate-300 hover:text-white transition-colors"
           >
-            Perfil da loja
+            Horários/Localização
           </button>
         </div>
       </div>
@@ -802,8 +934,8 @@ export default function Menu() {
               )
               .map((category) => {
                 const isHorizontal =
-                  category.label.toLowerCase().includes("mais pedidos") ||
-                  category.label.toLowerCase().includes("destaques");
+                  (category.label?.toLowerCase() || "").includes("mais pedidos") ||
+                  (category.label?.toLowerCase() || "").includes("destaques");
 
                 return (
                   <div key={category.id} className="pt-2">
@@ -829,11 +961,17 @@ export default function Menu() {
                                   <img
                                     src={imgSrc}
                                     alt={product.name}
-                                    className="w-full h-full object-cover transition-all duration-300"
+                                    className={`w-full h-full object-cover transition-all duration-300 ${!getStockStatus(product).available ? 'grayscale opacity-70' : ''}`}
                                   />
                                 ) : (
-                                  <div className="w-full h-full flex items-center justify-center text-slate-300">
+                                  <div className={`w-full h-full flex items-center justify-center text-slate-300 ${!getStockStatus(product).available ? 'grayscale opacity-70' : ''}`}>
                                     <ChefHat size={32} strokeWidth={1.5} />
+                                  </div>
+                                )}
+                                {!getStockStatus(product).available && (
+                                  <div className="absolute inset-0 bg-white/40 backdrop-blur-[1px] flex flex-col items-center justify-center p-3 text-center border-b border-slate-100">
+                                    <span className="bg-red-500 text-white px-2 py-0.5 rounded-full text-[10px] font-black shadow-lg mb-1">ESGOTADO</span>
+                                    <span className="text-[9px] font-bold text-red-700 bg-red-50 px-1.5 py-0.5 rounded border border-red-100">Falta: {getStockStatus(product).missingItem}</span>
                                   </div>
                                 )}
                                 {qty > 0 && (
@@ -897,8 +1035,14 @@ export default function Menu() {
                                     <img
                                       src={imgSrc}
                                       alt={product.name}
-                                      className="w-full h-full object-cover"
+                                      className={`w-full h-full object-cover ${!getStockStatus(product).available ? 'grayscale opacity-70' : ''}`}
                                     />
+                                    {!getStockStatus(product).available && (
+                                      <div className="absolute inset-0 bg-white/40 backdrop-blur-[1px] flex flex-col items-center justify-center p-2 text-center">
+                                        <span className="bg-red-500 text-white px-2 py-0.5 rounded-full text-[9px] font-black shadow-lg mb-1">ESGOTADO</span>
+                                        <span className="text-[8px] font-bold text-red-700 bg-red-50 px-1.5 py-0.5 rounded border border-red-100 leading-none">Falta: {getStockStatus(product).missingItem}</span>
+                                      </div>
+                                    )}
                                   </div>
                                   {qty > 0 && (
                                     <div className="absolute top-1 right-1 bg-theme text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center shadow-md border-2 border-white z-10">
@@ -927,7 +1071,7 @@ export default function Menu() {
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-100 pb-safe px-6 z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.05)]">
-        <div className="max-w-md mx-auto flex items-center justify-around pb-3 pt-3">
+        <div className={`max-w-md mx-auto flex items-center ${isViewOnly ? 'justify-center' : 'justify-around'} pb-3 pt-3`}>
           <button
             onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
             className="flex flex-col items-center gap-1 text-slate-400 hover:text-theme transition-colors active:scale-95"
@@ -936,22 +1080,24 @@ export default function Menu() {
             <span className="text-[10px] font-bold">Início</span>
           </button>
 
-          <button
-            onClick={() => cartCount > 0 && setShowCart(true)}
-            className={`flex flex-col items-center gap-1 relative transition-all active:scale-95 ${cartCount > 0 ? "text-theme" : "text-slate-400 hover:text-theme"}`}
-          >
-            <ShoppingCart size={22} strokeWidth={2.5} />
-            <span
-              className={`text-[10px] font-bold text-center`}
+          {!isViewOnly && (
+            <button
+              onClick={() => cartCount > 0 && setShowCart(true)}
+              className={`flex flex-col items-center gap-1 relative transition-all active:scale-95 ${cartCount > 0 ? "text-theme" : "text-slate-400 hover:text-theme"}`}
             >
-              {cartCount > 0 ? `R$ ${cartTotal.toFixed(2)}` : "Carrinho"}
-            </span>
-            {cartCount > 0 && (
-              <span className="absolute -top-1.5 -right-2 bg-theme text-white px-1.5 py-0.5 text-[10px] font-bold rounded-full border-2 border-white shadow-sm flex items-center justify-center">
-                {cartCount}
+              <ShoppingCart size={22} strokeWidth={2.5} />
+              <span
+                className={`text-[10px] font-bold text-center`}
+              >
+                {cartCount > 0 ? `R$ ${cartTotal.toFixed(2)}` : "Carrinho"}
               </span>
-            )}
-          </button>
+              {cartCount > 0 && (
+                <span className="absolute -top-1.5 -right-2 bg-theme text-white px-1.5 py-0.5 text-[10px] font-bold rounded-full border-2 border-white shadow-sm flex items-center justify-center">
+                  {cartCount}
+                </span>
+              )}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1031,7 +1177,8 @@ export default function Menu() {
             </div>
           </div>
         </div>
-      )}
+      )
+      }
 
       {/* ── PRODUCT MODAL ── */}
       {
@@ -1083,7 +1230,7 @@ export default function Menu() {
                 </div>
 
                 {/* Add-ons */}
-                {selectedProduct.allowedAddOns &&
+                {!isViewOnly && selectedProduct.allowedAddOns &&
                   selectedProduct.allowedAddOns.length > 0 && (
                     <div className="px-6 py-6 mt-2 bg-white border-t border-slate-100">
                       <div className="mb-4">
@@ -1140,7 +1287,7 @@ export default function Menu() {
                   )}
 
                 {/* Notes */}
-                {selectedProduct.allowObservations !== false && (
+                {!isViewOnly && selectedProduct.allowObservations !== false && (
                   <div className="px-6 py-6 mt-2 bg-white border-t border-slate-100">
                     <h4 className="font-bold text-slate-800 text-lg mb-1">
                       Alguma observação?
@@ -1160,38 +1307,48 @@ export default function Menu() {
 
               {/* Modal Footer */}
               <div className="p-4 border-t border-slate-100 bg-white flex items-center gap-4 flex-shrink-0 relative z-10 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] pb-safe">
-                <div className="flex items-center gap-4 bg-slate-50 rounded-2xl p-1.5 border border-slate-100">
-                  <button
-                    onClick={() =>
-                      setModalQuantity(Math.max(1, modalQuantity - 1))
-                    }
-                    className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-500 hover:bg-white hover:text-orange-500 hover:shadow-sm transition-all"
-                  >
-                    <Minus size={20} strokeWidth={2.5} />
-                  </button>
-                  <span className="font-bold text-slate-800 w-6 text-center text-lg">
-                    {modalQuantity}
-                  </span>
-                  <button
-                    onClick={() => setModalQuantity(modalQuantity + 1)}
-                    className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-500 hover:bg-white hover:text-orange-500 hover:shadow-sm transition-all"
-                  >
-                    <Plus size={20} strokeWidth={2.5} />
-                  </button>
-                </div>
+                {!isViewOnly && (
+                  <div className="flex items-center gap-4 bg-slate-50 rounded-2xl p-1.5 border border-slate-100">
+                    <button
+                      onClick={() =>
+                        setModalQuantity(Math.max(1, modalQuantity - 1))
+                      }
+                      className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-500 hover:bg-white hover:text-orange-500 hover:shadow-sm transition-all"
+                    >
+                      <Minus size={20} strokeWidth={2.5} />
+                    </button>
+                    <span className="font-bold text-slate-800 w-6 text-center text-lg">
+                      {modalQuantity}
+                    </span>
+                    <button
+                      onClick={() => setModalQuantity(modalQuantity + 1)}
+                      className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-500 hover:bg-white hover:text-orange-500 hover:shadow-sm transition-all"
+                    >
+                      <Plus size={20} strokeWidth={2.5} />
+                    </button>
+                  </div>
+                )}
+
                 <button
-                  onClick={handleAddToCart}
-                  className="flex-1 bg-theme text-white rounded-2xl font-bold py-4 shadow-lg shadow-theme-light transition-transform flex items-center justify-between px-6 active:scale-95 text-base"
+                  onClick={isViewOnly ? undefined : handleAddToCart}
+                  disabled={isViewOnly}
+                  className={`flex-1 rounded-2xl font-bold py-4 shadow-lg transition-transform flex items-center justify-center px-6 active:scale-95 text-base ${isViewOnly ? 'bg-slate-100 text-slate-400 shadow-none cursor-default' : 'bg-theme text-white shadow-theme-light'}`}
                 >
-                  <span>Adicionar</span>
-                  <span className="font-bold">
-                    R${" "}
-                    {(
-                      (selectedProduct.price +
-                        modalSelectedAddOns.reduce((s, a) => s + a.price, 0)) *
-                      modalQuantity
-                    ).toFixed(2)}
-                  </span>
+                  {isViewOnly ? (
+                    <span>Apenas Visualização</span>
+                  ) : (
+                    <>
+                      <span>Adicionar</span>
+                      <span className="font-bold ml-auto">
+                        R${" "}
+                        {(
+                          (selectedProduct.price +
+                            modalSelectedAddOns.reduce((s, a) => s + a.price, 0)) *
+                          modalQuantity
+                        ).toFixed(2)}
+                      </span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -1389,140 +1546,187 @@ export default function Menu() {
                   </div>
                 </section>
 
+                {/* Delivery OR Pickup Type */}
+                {tenant?.settings?.menu?.allowedOrderTypes !== "DELIVERY" && tenant?.settings?.menu?.allowedOrderTypes !== "PICKUP" && (
+                  <section className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
+                    <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2 text-lg">
+                      <div className="w-8 h-8 rounded-full bg-theme-light flex items-center justify-center text-theme">
+                        <Home size={16} strokeWidth={2.5} />
+                      </div>
+                      Tipo de Pedido
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setDeliveryType("DELIVERY")}
+                        className={`p-4 rounded-xl border flex flex-col items-center justify-center gap-2 transition-all active:scale-95 ${deliveryType === "DELIVERY" ? "border-theme bg-theme-light text-theme" : "border-slate-200 bg-white text-slate-500 hover:border-theme hover:bg-theme-light"}`}
+                      >
+                        <span className="font-semibold text-sm">🚚 Entrega</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeliveryType("PICKUP")}
+                        className={`p-4 rounded-xl border flex flex-col items-center justify-center gap-2 transition-all active:scale-95 ${deliveryType === "PICKUP" ? "border-theme bg-theme-light text-theme" : "border-slate-200 bg-white text-slate-500 hover:border-theme hover:bg-theme-light"}`}
+                      >
+                        <span className="font-semibold text-sm">🚶 Retirada</span>
+                      </button>
+                    </div>
+                  </section>
+                )}
+
+                {/* Display selected type if restricted */}
+                {(tenant?.settings?.menu?.allowedOrderTypes === "DELIVERY" || tenant?.settings?.menu?.allowedOrderTypes === "PICKUP") && (
+                  <section className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center justify-center gap-2 text-slate-600">
+                    {tenant?.settings?.menu?.allowedOrderTypes === "DELIVERY" ? (
+                      <span className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-theme animate-pulse" />
+                        Disponível apenas para Entrega
+                      </span>
+                    ) : (
+                      <span className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-theme animate-pulse" />
+                        Disponível apenas para Retirada no Balcão
+                      </span>
+                    )}
+                  </section>
+                )}
+
                 {/* Delivery Address */}
-                <section className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
-                  <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2 text-lg">
-                    <div className="w-8 h-8 rounded-full bg-theme-light flex items-center justify-center text-theme">
-                      <MapPin size={16} strokeWidth={2.5} />
-                    </div>
-                    Endereço de Entrega
-                  </h4>
-                  <div className="space-y-3">
-                    <div className="flex gap-3">
-                      <div className="flex-[2]">
-                        <label className="block text-[13px] font-semibold text-slate-600 mb-1.5 ml-1">
-                          Rua / Avenida
-                        </label>
-                        <input
-                          value={form.street}
-                          onChange={(e) =>
-                            setForm((p) => ({ ...p, street: e.target.value }))
-                          }
-                          placeholder="Nome da rua"
-                          className="w-full border border-slate-200 rounded-xl p-3.5 outline-none focus:border-theme focus:ring-4 focus:ring-theme-light transition-all text-[15px] bg-slate-50 placeholder-slate-400"
-                        />
+                {deliveryType === "DELIVERY" && (
+                  <section className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
+                    <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2 text-lg">
+                      <div className="w-8 h-8 rounded-full bg-theme-light flex items-center justify-center text-theme">
+                        <MapPin size={16} strokeWidth={2.5} />
                       </div>
-                      <div className="flex-1">
-                        <label className="block text-[13px] font-semibold text-slate-600 mb-1.5 ml-1">
-                          Nº
-                        </label>
-                        <input
-                          type="text"
-                          value={form.number}
-                          onChange={(e) =>
-                            setForm((p) => ({ ...p, number: e.target.value }))
-                          }
-                          placeholder="Ex: 123"
-                          className="w-full border border-slate-200 rounded-xl p-3.5 outline-none focus:border-theme focus:ring-4 focus:ring-theme-light transition-all text-[15px] bg-slate-50 placeholder-slate-400"
-                        />
-                      </div>
-                    </div>
-                    <div className="relative">
-                      <label className="block text-[13px] font-semibold text-slate-600 mb-1.5 ml-1">
-                        Bairro
-                      </label>
-                      <input
-                        value={form.neighborhood}
-                        onChange={(e) => {
-                          setForm((p) => ({
-                            ...p,
-                            neighborhood: e.target.value,
-                          }));
-                          setShowNeighborhoodSuggestions(true);
-                        }}
-                        onFocus={() => setShowNeighborhoodSuggestions(true)}
-                        onBlur={() =>
-                          setTimeout(
-                            () => setShowNeighborhoodSuggestions(false),
-                            200,
-                          )
-                        }
-                        placeholder="Selecione ou digite seu bairro"
-                        className="w-full border border-slate-200 rounded-xl p-3.5 outline-none focus:border-theme focus:ring-4 focus:ring-theme-light transition-all text-[15px] bg-slate-50 placeholder-slate-400"
-                      />
-                      {showNeighborhoodSuggestions && (
-                        <div className="absolute z-[100] w-full mt-2 bg-white border border-slate-200 shadow-2xl rounded-2xl max-h-60 overflow-y-auto ring-1 ring-black/5 animate-in fade-in slide-in-from-top-2 duration-200">
-                          {neighborhoodFees.filter((f) =>
-                            normalizeText(f.name).includes(
-                              normalizeText(form.neighborhood),
-                            ),
-                          ).length > 0 ? (
-                            neighborhoodFees
-                              .filter((f) =>
-                                normalizeText(f.name).includes(
-                                  normalizeText(form.neighborhood),
-                                ),
-                              )
-                              .map((fee) => (
-                                <button
-                                  key={fee.id}
-                                  type="button"
-                                  className="w-full text-left p-4 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-0 flex justify-between items-center transition-colors group"
-                                  onMouseDown={(e) => {
-                                    // Use onMouseDown to trigger before onBlur
-                                    e.preventDefault();
-                                    setForm((p) => ({
-                                      ...p,
-                                      neighborhood: fee.name,
-                                    }));
-                                    setShowNeighborhoodSuggestions(false);
-                                  }}
-                                >
-                                  <div>
-                                    <span className="font-bold text-slate-700 block text-[15px]">
-                                      {fee.name}
-                                    </span>
-                                    <span className="text-xs text-slate-400">
-                                      Entrega selecionada
-                                    </span>
-                                  </div>
-                                  <span className="font-bold text-theme bg-theme-light px-3 py-1.5 rounded-xl text-sm group-hover:bg-theme group-hover:text-white transition-colors">
-                                    + R$ {fee.price.toFixed(2)}
-                                  </span>
-                                </button>
-                              ))
-                          ) : (
-                            <div className="p-8 text-center">
-                              <MapPin
-                                className="mx-auto text-slate-300 mb-2"
-                                size={24}
-                              />
-                              <p className="text-sm text-slate-500 font-medium">
-                                Bairro não encontrado
-                              </p>
-                              <p className="text-xs text-slate-400">
-                                Continue digitando o nome
-                              </p>
-                            </div>
-                          )}
+                      Endereço de Entrega
+                    </h4>
+                    <div className="space-y-3">
+                      <div className="flex gap-3">
+                        <div className="flex-[2]">
+                          <label className="block text-[13px] font-semibold text-slate-600 mb-1.5 ml-1">
+                            Rua / Avenida
+                          </label>
+                          <input
+                            value={form.street}
+                            onChange={(e) =>
+                              setForm((p) => ({ ...p, street: e.target.value }))
+                            }
+                            placeholder="Nome da rua"
+                            className="w-full border border-slate-200 rounded-xl p-3.5 outline-none focus:border-theme focus:ring-4 focus:ring-theme-light transition-all text-[15px] bg-slate-50 placeholder-slate-400"
+                          />
                         </div>
-                      )}
+                        <div className="flex-1">
+                          <label className="block text-[13px] font-semibold text-slate-600 mb-1.5 ml-1">
+                            Nº
+                          </label>
+                          <input
+                            type="text"
+                            value={form.number}
+                            onChange={(e) =>
+                              setForm((p) => ({ ...p, number: e.target.value }))
+                            }
+                            placeholder="Ex: 123"
+                            className="w-full border border-slate-200 rounded-xl p-3.5 outline-none focus:border-theme focus:ring-4 focus:ring-theme-light transition-all text-[15px] bg-slate-50 placeholder-slate-400"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[13px] font-semibold text-slate-600 mb-1.5 ml-1">
+                          Complemento (Apto, Bloco, etc)
+                        </label>
+                        <input
+                          value={form.complement}
+                          onChange={(e) =>
+                            setForm((p) => ({ ...p, complement: e.target.value }))
+                          }
+                          placeholder="Ex: Apto 101, Bloco 2"
+                          className="w-full border border-slate-200 rounded-xl p-3.5 outline-none focus:border-theme focus:ring-4 focus:ring-theme-light transition-all text-[15px] bg-slate-50 placeholder-slate-400"
+                        />
+                      </div>
+                      <div className="relative">
+                        <label className="block text-[13px] font-semibold text-slate-600 mb-1.5 ml-1">
+                          Bairro
+                        </label>
+                        <input
+                          value={form.neighborhood}
+                          onChange={(e) => {
+                            setForm((p) => ({
+                              ...p,
+                              neighborhood: e.target.value,
+                            }));
+                            setShowNeighborhoodSuggestions(true);
+                          }}
+                          onFocus={() => setShowNeighborhoodSuggestions(true)}
+                          onBlur={() =>
+                            setTimeout(
+                              () => setShowNeighborhoodSuggestions(false),
+                              200,
+                            )
+                          }
+                          placeholder="Selecione ou digite seu bairro"
+                          className="w-full border border-slate-200 rounded-xl p-3.5 outline-none focus:border-theme focus:ring-4 focus:ring-theme-light transition-all text-[15px] bg-slate-50 placeholder-slate-400"
+                        />
+                        {showNeighborhoodSuggestions && (
+                          <div className="absolute z-[100] w-full mt-2 bg-white border border-slate-200 shadow-2xl rounded-2xl max-h-60 overflow-y-auto ring-1 ring-black/5 animate-in fade-in slide-in-from-top-2 duration-200">
+                            {neighborhoodFees.filter((f) =>
+                              normalizeText(f.name).includes(
+                                normalizeText(form.neighborhood),
+                              ),
+                            ).length > 0 ? (
+                              neighborhoodFees
+                                .filter((f) =>
+                                  normalizeText(f.name).includes(
+                                    normalizeText(form.neighborhood),
+                                  ),
+                                )
+                                .map((fee) => (
+                                  <button
+                                    key={fee.id}
+                                    type="button"
+                                    className="w-full text-left p-4 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-0 flex justify-between items-center transition-colors group"
+                                    onMouseDown={(e) => {
+                                      // Use onMouseDown to trigger before onBlur
+                                      e.preventDefault();
+                                      setForm((p) => ({
+                                        ...p,
+                                        neighborhood: fee.name,
+                                      }));
+                                      setShowNeighborhoodSuggestions(false);
+                                    }}
+                                  >
+                                    <div>
+                                      <span className="font-bold text-slate-700 block text-[15px]">
+                                        {fee.name}
+                                      </span>
+                                      <span className="text-xs text-slate-400">
+                                        Entrega selecionada
+                                      </span>
+                                    </div>
+                                    <span className="font-bold text-theme bg-theme-light px-3 py-1.5 rounded-xl text-sm group-hover:bg-theme group-hover:text-white transition-colors">
+                                      + R$ {fee.price.toFixed(2)}
+                                    </span>
+                                  </button>
+                                ))
+                            ) : (
+                              <div className="p-8 text-center">
+                                <MapPin
+                                  className="mx-auto text-slate-300 mb-2"
+                                  size={24}
+                                />
+                                <p className="text-sm text-red-500 font-bold">
+                                  Entrega não disponível para este bairro
+                                </p>
+                                <p className="text-xs text-slate-400 mt-1">
+                                  Infelizmente não atendemos esta região.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-[13px] font-semibold text-slate-600 mb-1.5 ml-1">
-                        Complemento
-                      </label>
-                      <input
-                        value={form.notes}
-                        onChange={(e) =>
-                          setForm((p) => ({ ...p, notes: e.target.value }))
-                        }
-                        placeholder="Apto, bloco, ponto de ref..."
-                        className="w-full border border-slate-200 rounded-xl p-3.5 outline-none focus:border-theme focus:ring-4 focus:ring-theme-light transition-all text-[15px] bg-slate-50 placeholder-slate-400"
-                      />
-                    </div>
-                  </div>
-                </section>
+                  </section>
+                )}
 
                 {/* Coupon Code */}
                 <section className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
@@ -1625,9 +1829,17 @@ export default function Menu() {
                   </div>
                   <div className="flex justify-between items-center text-slate-500">
                     <span>Taxa de Entrega</span>
-                    {!form.neighborhood || (!activeFee && neighborhoodFees.length > 0) ? (
+                    {deliveryType === "PICKUP" ? (
+                      <span className="font-semibold text-green-600 bg-green-50 px-2 py-0.5 border border-green-200 rounded-md text-xs">
+                        Grátis (Retirada)
+                      </span>
+                    ) : !form.neighborhood ? (
                       <span className="font-semibold text-theme bg-theme-light px-2 py-0.5 border border-theme rounded-md text-xs">
                         Informe o Bairro
+                      </span>
+                    ) : !activeFee ? (
+                      <span className="font-semibold text-red-600 bg-red-50 px-2 py-0.5 border border-red-200 rounded-md text-xs">
+                        Entrega Indisponível
                       </span>
                     ) : (
                       <span className="font-medium text-slate-800">
@@ -1668,96 +1880,98 @@ export default function Menu() {
       }
 
       {/* Profile Modal */}
-      {showProfileModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-              <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2">
-                <Store size={20} className="text-theme" /> {tenant.name}
-              </h2>
-              <button
-                onClick={() => setShowProfileModal(false)}
-                className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-200 text-slate-500 hover:bg-slate-300 transition-colors"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
-              {/* Operating Hours */}
-              <div className="space-y-3">
-                <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
-                  <Sun size={16} className="text-orange-500" /> Horário de Funcionamento
-                </h3>
-
-                {tenant.settings?.operatingHours ? (
-                  <div className="bg-slate-50 border border-slate-100 rounded-xl divide-y divide-slate-100">
-                    {[
-                      { key: 'monday', label: 'Segunda-feira' },
-                      { key: 'tuesday', label: 'Terça-feira' },
-                      { key: 'wednesday', label: 'Quarta-feira' },
-                      { key: 'thursday', label: 'Quinta-feira' },
-                      { key: 'friday', label: 'Sexta-feira' },
-                      { key: 'saturday', label: 'Sábado' },
-                      { key: 'sunday', label: 'Domingo' }
-                    ].map(day => {
-                      const value = (tenant.settings?.operatingHours as any)?.[day.key];
-                      if (!value) return null;
-                      return (
-                        <div key={day.key} className="flex justify-between items-center p-3 text-sm">
-                          <span className="text-slate-500 font-medium">{day.label}</span>
-                          <span className="text-slate-800 font-bold">{value}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  tenant.settings?.menu?.openingTime && tenant.settings?.menu?.closingTime && (
-                    <p className="text-slate-600 text-sm font-medium">
-                      Todos os dias: {tenant.settings.menu.openingTime} às {tenant.settings.menu.closingTime}
-                    </p>
-                  )
-                )}
+      {
+        showProfileModal && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                  <Store size={20} className="text-theme" /> {tenant.name}
+                </h2>
+                <button
+                  onClick={() => setShowProfileModal(false)}
+                  className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-200 text-slate-500 hover:bg-slate-300 transition-colors"
+                >
+                  <X size={20} />
+                </button>
               </div>
-
-              {/* Address */}
-              {tenant.settings?.address && (
-                <div className="space-y-3 pt-2">
+              <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+                {/* Operating Hours */}
+                <div className="space-y-3">
                   <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
-                    <MapPin size={16} className="text-emerald-500" /> Endereço
+                    <Sun size={16} className="text-orange-500" /> Horário de Funcionamento
                   </h3>
 
-                  <div
-                    className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col gap-4 group transition-colors hover:bg-slate-100"
-                  >
-                    <div
-                      className="flex items-center justify-between cursor-pointer w-full"
-                      onClick={() => tenant.settings?.address && window.open(`https://maps.google.com/?q=${encodeURIComponent(tenant.settings.address)}`, '_blank')}
-                    >
-                      <p className="text-slate-600 text-sm leading-relaxed pr-4 font-medium">
-                        {tenant.settings.address}
-                      </p>
-                      <ChevronRight size={18} className="text-slate-400 group-hover:text-theme transition-colors flex-shrink-0" />
+                  {tenant.settings?.operatingHours ? (
+                    <div className="bg-slate-50 border border-slate-100 rounded-xl divide-y divide-slate-100">
+                      {[
+                        { key: 'monday', label: 'Segunda-feira' },
+                        { key: 'tuesday', label: 'Terça-feira' },
+                        { key: 'wednesday', label: 'Quarta-feira' },
+                        { key: 'thursday', label: 'Quinta-feira' },
+                        { key: 'friday', label: 'Sexta-feira' },
+                        { key: 'saturday', label: 'Sábado' },
+                        { key: 'sunday', label: 'Domingo' }
+                      ].map(day => {
+                        const value = (tenant.settings?.operatingHours as any)?.[day.key];
+                        if (!value) return null;
+                        return (
+                          <div key={day.key} className="flex justify-between items-center p-3 text-sm">
+                            <span className="text-slate-500 font-medium">{day.label}</span>
+                            <span className="text-slate-800 font-bold">{value}</span>
+                          </div>
+                        );
+                      })}
                     </div>
+                  ) : (
+                    tenant.settings?.menu?.openingTime && tenant.settings?.menu?.closingTime && (
+                      <p className="text-slate-600 text-sm font-medium">
+                        Todos os dias: {tenant.settings.menu.openingTime} às {tenant.settings.menu.closingTime}
+                      </p>
+                    )
+                  )}
+                </div>
 
-                    {/* Google Maps Embed via Datamap iframe */}
-                    <div className="w-full rounded-xl overflow-hidden shadow-sm">
-                      <iframe
-                        width="100%"
-                        height="200"
-                        frameBorder="0"
-                        scrolling="no"
-                        marginHeight={0}
-                        marginWidth={0}
-                        src={`https://maps.google.com/maps?width=100%25&height=200&hl=pt-BR&q=${encodeURIComponent(tenant.settings.address)}&t=&z=15&ie=UTF8&iwloc=B&output=embed`}
-                      ></iframe>
+                {/* Address */}
+                {tenant.settings?.address && (
+                  <div className="space-y-3 pt-2">
+                    <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
+                      <MapPin size={16} className="text-emerald-500" /> Endereço
+                    </h3>
+
+                    <div
+                      className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col gap-4 group transition-colors hover:bg-slate-100"
+                    >
+                      <div
+                        className="flex items-center justify-between cursor-pointer w-full"
+                        onClick={() => tenant.settings?.address && window.open(`https://maps.google.com/?q=${encodeURIComponent(tenant.settings.address)}`, '_blank')}
+                      >
+                        <p className="text-slate-600 text-sm leading-relaxed pr-4 font-medium">
+                          {tenant.settings.address}
+                        </p>
+                        <ChevronRight size={18} className="text-slate-400 group-hover:text-theme transition-colors flex-shrink-0" />
+                      </div>
+
+                      {/* Google Maps Embed via Datamap iframe */}
+                      <div className="w-full rounded-xl overflow-hidden shadow-sm">
+                        <iframe
+                          width="100%"
+                          height="200"
+                          frameBorder="0"
+                          scrolling="no"
+                          marginHeight={0}
+                          marginWidth={0}
+                          src={`https://maps.google.com/maps?width=100%25&height=200&hl=pt-BR&q=${encodeURIComponent(tenant.settings.address)}&t=&z=15&ie=UTF8&iwloc=B&output=embed`}
+                        ></iframe>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       {/* Added style to hide scrollbar for horizontal lists */}
       <style
@@ -1779,6 +1993,6 @@ export default function Menu() {
             `,
         }}
       />
-    </div>
+    </div >
   );
 }

@@ -258,6 +258,7 @@ export const POS: React.FC<POSProps> = ({
       street: deliveryForm.street,
       number: deliveryForm.number,
       neighborhood: deliveryForm.neighborhood,
+      complement: deliveryForm.complement,
       lastOrder: Date.now()
     };
     onAddCustomer(newC);
@@ -504,10 +505,15 @@ export const POS: React.FC<POSProps> = ({
                     <div className="space-y-2 animate-in fade-in">
                       <input className="w-full bg-background border border-border rounded p-2 text-xs outline-none focus:border-accent" placeholder="Nome" value={deliveryForm.customerName || (orderType === 'DINE_IN' ? dineInName : '')} onChange={e => { setDeliveryForm(p => ({ ...p, customerName: e.target.value })); setDineInName(e.target.value); }} />
                       <input className="w-full bg-background border border-border rounded p-2 text-xs outline-none focus:border-accent" placeholder="Tel" value={deliveryForm.phone} onChange={e => setDeliveryForm(p => ({ ...p, phone: e.target.value }))} />
-                      <div className="flex gap-2">
-                        <input className="w-[70%] bg-background border border-border rounded p-2 text-xs outline-none focus:border-accent" placeholder="Rua" value={deliveryForm.street} onChange={e => setDeliveryForm(p => ({ ...p, street: e.target.value }))} />
-                        <input type="number" className="w-[30%] bg-background border border-border rounded p-2 text-xs outline-none focus:border-accent" placeholder="Nº" value={deliveryForm.number} onChange={e => setDeliveryForm(p => ({ ...p, number: e.target.value }))} />
+                      <div className="flex gap-3">
+                        <div className="flex-[2]">
+                          <input className="w-full bg-background border border-border rounded p-2 text-xs outline-none focus:border-accent" placeholder="Rua" value={deliveryForm.street} onChange={e => setDeliveryForm(p => ({ ...p, street: e.target.value }))} />
+                        </div>
+                        <div className="flex-1">
+                          <input type="text" className="w-full bg-background border border-border rounded p-2 text-xs outline-none focus:border-accent" placeholder="Nº" value={deliveryForm.number} onChange={e => setDeliveryForm(p => ({ ...p, number: e.target.value }))} />
+                        </div>
                       </div>
+                      <input className="w-full bg-background border border-border rounded p-2 text-xs outline-none focus:border-accent" placeholder="Complemento (Apto, Bloco, etc)" value={deliveryForm.complement || ''} onChange={e => setDeliveryForm(p => ({ ...p, complement: e.target.value }))} />
                       <div className="relative">
                         <input
                           className="w-full bg-background border border-border rounded p-2 text-xs outline-none focus:border-accent"

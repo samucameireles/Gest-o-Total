@@ -9,18 +9,56 @@ interface ReportsProps {
 }
 
 export const Reports: React.FC<ReportsProps> = ({ orders, dailyHistory = [] }) => {
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toLocaleDateString('pt-BR').split('/').reverse().join('-')); // YYYY-MM-DD
+  const today = new Date();
+  const todayDay = today.getDate().toString().padStart(2, '0');
+  const todayMonth = (today.getMonth() + 1).toString().padStart(2, '0');
+  const todayYear = today.getFullYear().toString();
 
-  const isToday = selectedDate === new Date().toLocaleDateString('pt-BR').split('/').reverse().join('-');
+  const [selectedDay, setSelectedDay] = useState<string>('todos');
+  const [selectedMonth, setSelectedMonth] = useState<string>('todos');
+  const [selectedYear, setSelectedYear] = useState<string>(todayYear);
 
   // V10: Dashboard reads from Paid orders (Financial View).
   // Includes ARCHIVED (completed) or just marked as isPaid.
-  let currentOrders = orders;
+  let currentOrders: Order[] = [];
 
-  if (!isToday) {
-    const historyEntry = dailyHistory.find(h => h.id === selectedDate);
-    currentOrders = historyEntry ? historyEntry.orders : [];
-  }
+  // Filter historic orders
+  const historicOrders = dailyHistory
+    .filter(h => {
+      const parts = (h.date || h.id || '').split('T')[0].split('-');
+      if (parts.length < 3) return false;
+      const [y, m, d] = parts;
+
+      if (selectedYear !== 'todos' && y !== selectedYear) return false;
+      if (selectedMonth !== 'todos' && m !== selectedMonth) return false;
+      if (selectedDay !== 'todos' && d !== selectedDay) return false;
+      return true;
+    })
+    .flatMap(h => h.orders);
+
+  // Filter live orders (not archived yet)
+  const liveOrders = orders.filter(o => {
+    const dObj = new Date(o.createdAt);
+    const y = dObj.getFullYear().toString();
+    const m = (dObj.getMonth() + 1).toString().padStart(2, '0');
+    const d = dObj.getDate().toString().padStart(2, '0');
+
+    if (selectedYear !== 'todos' && y !== selectedYear) return false;
+    if (selectedMonth !== 'todos' && m !== selectedMonth) return false;
+    if (selectedDay !== 'todos' && d !== selectedDay) return false;
+    return true;
+  });
+
+  currentOrders = [...historicOrders, ...liveOrders];
+
+  const includesToday = liveOrders.length > 0;
+
+  // Deduplicate by ID
+  const uniqueOrdersMap = new Map<string, Order>();
+  currentOrders.forEach(o => {
+    uniqueOrdersMap.set(o.id, o);
+  });
+  currentOrders = Array.from(uniqueOrdersMap.values());
 
   const paidOrders = currentOrders.filter(o => o.isPaid || o.status === 'ARCHIVED');
 
@@ -37,11 +75,12 @@ export const Reports: React.FC<ReportsProps> = ({ orders, dailyHistory = [] }) =
 
   const originData = [
     { name: 'Mesa/Balcão', value: paidOrders.filter(o => o.type === 'DINE_IN').length },
-    { name: 'Delivery', value: paidOrders.filter(o => o.type === 'DELIVERY').length }
+    { name: 'Delivery', value: paidOrders.filter(o => o.type === 'DELIVERY').length },
+    { name: 'Retirada', value: paidOrders.filter(o => o.type === 'PICKUP').length }
   ].filter(d => d.value > 0);
 
   const COLORS = ['#2563EB', '#10B981', '#CA8A04', '#EF4444'];
-  const ORIGIN_COLORS = ['#CA8A04', '#2563EB'];
+  const ORIGIN_COLORS = ['#CA8A04', '#2563EB', '#10B981'];
 
   // Recent Sales List
   const recentOrders = [...paidOrders].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
@@ -54,19 +93,62 @@ export const Reports: React.FC<ReportsProps> = ({ orders, dailyHistory = [] }) =
       <div className="flex items-center justify-between mb-8">
         <div>
           <h2 className="text-2xl font-heading font-extrabold text-textPrimary">Dashboard de Performance</h2>
-          <div className="flex items-center gap-2 mt-2">
-            <Clock size={16} className="text-textSecondary" />
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={e => setSelectedDate(e.target.value)}
-              className="bg-transparent border-b border-border outline-none font-bold text-textPrimary"
-            />
+          <div className="flex flex-wrap items-center gap-4 bg-white border border-slate-200 rounded-xl p-2 px-4 shadow-sm mt-3 w-fit">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-[#A16207] uppercase tracking-wider">Dia</span>
+              <select
+                value={selectedDay}
+                onChange={e => setSelectedDay(e.target.value)}
+                className="bg-[#fefce8] text-[#713f12] border-none outline-none text-sm font-semibold rounded-lg py-1 px-2 cursor-pointer focus:ring-2 focus:ring-yellow-500/20"
+              >
+                <option value="todos">Todos</option>
+                {Array.from({ length: 31 }, (_, i) => (i + 1).toString().padStart(2, '0')).map(d => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-[#A16207] uppercase tracking-wider">Mês</span>
+              <select
+                value={selectedMonth}
+                onChange={e => setSelectedMonth(e.target.value)}
+                className="bg-[#fefce8] text-[#713f12] border-none outline-none text-sm font-semibold rounded-lg py-1 px-2 cursor-pointer focus:ring-2 focus:ring-yellow-500/20"
+              >
+                <option value="todos">Todos os Meses</option>
+                <option value="01">Janeiro</option>
+                <option value="02">Fevereiro</option>
+                <option value="03">Março</option>
+                <option value="04">Abril</option>
+                <option value="05">Maio</option>
+                <option value="06">Junho</option>
+                <option value="07">Julho</option>
+                <option value="08">Agosto</option>
+                <option value="09">Setembro</option>
+                <option value="10">Outubro</option>
+                <option value="11">Novembro</option>
+                <option value="12">Dezembro</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-[#A16207] uppercase tracking-wider">Ano</span>
+              <select
+                value={selectedYear}
+                onChange={e => setSelectedYear(e.target.value)}
+                className="bg-[#fefce8] text-[#713f12] border-none outline-none text-sm font-semibold rounded-lg py-1 px-2 cursor-pointer focus:ring-2 focus:ring-yellow-500/20"
+              >
+                <option value="todos">Todos os Anos</option>
+                {Array.from({ length: 5 }, (_, i) => (2024 + i).toString()).map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
-        <span className={`text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1 border ${isToday ? 'text-textSecondary bg-white border-border' : 'text-blue-600 bg-blue-50 border-blue-100'}`}>
-          <div className={`w-2 h-2 rounded-full ${isToday ? 'bg-green-500 animate-pulse' : 'bg-blue-500'}`}></div>
-          {isToday ? 'Atualizado em tempo real' : 'Visualização de Histórico'}
+        <span className={`text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1 border ${includesToday ? 'text-textSecondary bg-white border-border' : 'text-blue-600 bg-blue-50 border-blue-100'}`}>
+          <div className={`w-2 h-2 rounded-full ${includesToday ? 'bg-green-500 animate-pulse' : 'bg-blue-500'}`}></div>
+          {includesToday ? 'Inclui tempo real' : 'Histórico Consolidado'}
         </span>
       </div>
 
@@ -205,12 +287,16 @@ export const Reports: React.FC<ReportsProps> = ({ orders, dailyHistory = [] }) =
               <div className="bg-gray-50 p-4 rounded-xl border border-border">
                 <p className="text-xs font-bold text-textSecondary uppercase mb-2">Cliente</p>
                 <p className="font-bold text-lg text-textPrimary">{selectedOrder.customerName || 'Não identificado'}</p>
-                {selectedOrder.type === 'DELIVERY' && selectedOrder.deliveryDetails && (
+                {selectedOrder.type === 'DELIVERY' && selectedOrder.deliveryDetails ? (
                   <div className="flex items-start gap-2 mt-2 text-sm text-textSecondary">
                     <MapPin size={16} className="mt-0.5" />
                     <span>{selectedOrder.deliveryDetails.street}, {selectedOrder.deliveryDetails.number} - {selectedOrder.deliveryDetails.neighborhood}</span>
                   </div>
-                )}
+                ) : selectedOrder.type === 'PICKUP' ? (
+                  <div className="flex items-start gap-2 mt-2 text-sm text-green-600 font-semibold bg-green-50 p-2 rounded-lg">
+                    <span>Retirada no Balcão</span>
+                  </div>
+                ) : null}
                 <p className="text-xs text-textSecondary mt-2"><Clock size={12} className="inline mr-1" /> {new Date(selectedOrder.createdAt).toLocaleString()}</p>
               </div>
 
