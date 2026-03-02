@@ -217,4 +217,7 @@ export interface PrinterSettings {
   print_counter_sales: boolean;
   print_delivery_sales: boolean;
   local_printer_name?: string;
+  font_type?: 'STANDARD' | 'COMPACT';
+  force_uppercase?: boolean;
+  print_logo?: boolean;
 }

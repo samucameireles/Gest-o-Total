@@ -162,7 +162,7 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
     }
     try {
       console.log('[Settings] Calling PrinterService.testConnection', printerSettings);
-      await PrinterService.testConnection(printerSettings);
+      await PrinterService.testConnection(printerSettings, settings);
       alert('Comando de teste enviado!');
     } catch (e: any) {
       console.error('[Settings] Test Print Error:', e);
@@ -645,6 +645,49 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
                       >
                         <div className="w-5 h-5 rounded-full bg-white shadow-sm" />
                       </button>
+                    </div>
+
+                    <div className="pt-4 border-t border-slate-100 flex flex-col gap-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold text-sm text-slate-700">Estilo da Fonte</p>
+                          <p className="text-[10px] text-slate-400">Padrão (Maior) ou Compacta</p>
+                        </div>
+                        <select
+                          value={printerSettings?.font_type || 'STANDARD'}
+                          onChange={e => setPrinterSettings(s => s ? { ...s, font_type: e.target.value as any } : null)}
+                          className="bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold outline-none"
+                        >
+                          <option value="STANDARD">Padrão</option>
+                          <option value="COMPACT">Compacta</option>
+                        </select>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold text-sm text-slate-700">Forçar Caixa Alta</p>
+                          <p className="text-[10px] text-slate-400">Texto sempre em maiúsculo</p>
+                        </div>
+                        <button
+                          onClick={() => setPrinterSettings(s => s ? { ...s, force_uppercase: !s.force_uppercase } : null)}
+                          className={`w-12 h-7 rounded-full transition-all flex items-center px-1 ${printerSettings?.force_uppercase !== false ? 'bg-emerald-500 justify-end' : 'bg-slate-300 justify-start'}`}
+                        >
+                          <div className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold text-sm text-slate-700">Imprimir Logotipo</p>
+                          <p className="text-[10px] text-slate-400">Inclui o logo da loja no topo</p>
+                        </div>
+                        <button
+                          onClick={() => setPrinterSettings(s => s ? { ...s, print_logo: !s.print_logo } : null)}
+                          className={`w-12 h-7 rounded-full transition-all flex items-center px-1 ${printerSettings?.print_logo ? 'bg-emerald-500 justify-end' : 'bg-slate-300 justify-start'}`}
+                        >
+                          <div className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
