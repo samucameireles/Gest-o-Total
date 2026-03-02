@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { StoreSettings, Coupon } from '../types';
-import { Save, Store, Image as ImageIcon, Tag, Trash2, Plus, Users, Shield, Eye, Link2, Copy, Check, Globe, ToggleLeft, ToggleRight, Sun } from 'lucide-react';
+import { StoreSettings, Coupon, PrinterSettings } from '../types';
+import { Save, Store, Image as ImageIcon, Tag, Trash2, Plus, Users, Shield, Eye, Link2, Copy, Check, Globe, ToggleLeft, ToggleRight, Sun, Printer, Wifi, FileText } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useParams } from 'react-router-dom';
 import { LogoUploader } from './LogoUploader';
+import { PrinterService } from '../services/PrinterService';
 
 interface SettingsProps {
   settings: StoreSettings;
@@ -14,9 +15,11 @@ interface SettingsProps {
   cashiers?: any[];
   onAddCashier?: (email: string, pass: string) => Promise<void>;
   onRemoveCashier?: (userId: string) => Promise<void>;
+  onUpdatePrinterSettings: (ps: PrinterSettings) => void;
+  printerSettings: PrinterSettings | null;
 }
 
-export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, coupons, onAddCoupon, onRemoveCoupon, cashiers = [], onAddCashier, onRemoveCashier }) => {
+export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, coupons, onAddCoupon, onRemoveCoupon, cashiers = [], onAddCashier, onRemoveCashier, onUpdatePrinterSettings, printerSettings: initialPrinterSettings }) => {
   const { tenantId } = useParams<{ tenantId: string }>();
   const [name, setName] = useState(settings.name);
   const [logo, setLogo] = useState(settings.logoUrl);
@@ -55,11 +58,19 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
   const [cashierPassConfirm, setCashierPassConfirm] = useState('');
 
   // UI Tabs
-  const [activeTab, setActiveTab] = useState<'system' | 'menu'>('system');
+  const [activeTab, setActiveTab] = useState<'system' | 'menu' | 'printer'>('system');
+
+  // Printer Settings State
+  const [printerSettings, setPrinterSettings] = useState<PrinterSettings | null>(initialPrinterSettings);
+  const [printerLoading, setPrinterLoading] = useState(!initialPrinterSettings);
+  const [localPrinters, setLocalPrinters] = useState<{ Name: string }[]>([]);
+  const [loadingPrinters, setLoadingPrinters] = useState(false);
 
   // Load slug on mount
   useEffect(() => {
     if (!tenantId) return;
+
+    // Fetch Online Menu Settings
     supabase.from('tenants').select('slug, online_menu_enabled').eq('id', tenantId).single().then(({ data }) => {
       if (data) {
         setSlug(data.slug || '');
@@ -67,6 +78,37 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
       }
     });
   }, [tenantId]);
+
+
+  useEffect(() => {
+    if (!tenantId) return;
+
+    const fetchPrinterSettings = async () => {
+      if (initialPrinterSettings) {
+        setPrinterSettings(initialPrinterSettings);
+        setPrinterLoading(false);
+      } else {
+        const { data } = await supabase.from('printer_settings').select('*').eq('tenant_id', tenantId).single();
+        if (data) {
+          setPrinterSettings(data as PrinterSettings);
+          onUpdatePrinterSettings(data as PrinterSettings);
+        } else {
+          const defaultSettings: PrinterSettings = {
+            connection_type: 'TCP_IP',
+            ip_address: '127.0.0.1',
+            port: 9100,
+            paper_size: '80mm',
+            print_counter_sales: true,
+            print_delivery_sales: true
+          };
+          setPrinterSettings(defaultSettings);
+        }
+        setPrinterLoading(false);
+      }
+    };
+    fetchPrinterSettings();
+    fetchLocalPrinters();
+  }, [tenantId, initialPrinterSettings]);
 
   const handleSaveSlug = async () => {
     if (!tenantId) return;
@@ -95,6 +137,59 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
 
   const handleSave = () => { onUpdateSettings({ name, logoUrl: logo, themeColor, address, googleMapsUrl, operatingHours, menu: { openingTime, closingTime, forceClose, minimumOrder, estimatedDeliveryTime, allowedOrderTypes } }); alert('Salvo!'); };
   const handleAddCoupon = () => { if (newCode && newPercent) { onAddCoupon(newCode.toUpperCase(), parseFloat(newPercent)); setNewCode(''); setNewPercent(''); } };
+
+  const handleSavePrinter = async () => {
+    if (!tenantId || !printerSettings) return;
+    const { error } = await supabase.from('printer_settings').upsert({
+      ...printerSettings,
+      tenant_id: tenantId,
+      updated_at: new Date().toISOString()
+    });
+    if (error) {
+      alert('Erro ao salvar impressora: ' + error.message);
+    } else {
+      onUpdatePrinterSettings(printerSettings);
+      alert('Configurações de impressão salvas!');
+    }
+  };
+
+  const handleTestPrint = async () => {
+    console.log('[Settings] Button Test Print Clicked');
+    if (!printerSettings) {
+      console.warn('[Settings] No printer settings found');
+      alert('Configurações de impressora não encontradas.');
+      return;
+    }
+    try {
+      console.log('[Settings] Calling PrinterService.testConnection', printerSettings);
+      await PrinterService.testConnection(printerSettings);
+      alert('Comando de teste enviado!');
+    } catch (e: any) {
+      console.error('[Settings] Test Print Error:', e);
+      alert('Erro ao testar impressão: ' + e.message);
+    }
+  };
+
+  const fetchLocalPrinters = async () => {
+    setLoadingPrinters(true);
+    try {
+      const bridgeUrl = `http://${printerSettings?.ip_address || 'localhost'}:${printerSettings?.port || 3005}/printers`;
+      const resp = await fetch(bridgeUrl);
+      if (!resp.ok) throw new Error('Não foi possível conectar na ponte.');
+      const data = await resp.json();
+      console.log('[Settings] Impressoras encontradas:', data);
+
+      const list = Array.isArray(data) ? data : (data ? [data] : []);
+      setLocalPrinters(list);
+
+      if (list.length === 0) alert('Nenhuma impressora encontrada no Windows.');
+    } catch (e: any) {
+      console.error('Error fetching printers:', e);
+      alert('Erro ao buscar impressoras: Certifique-se que o terminal com "npm run dev" está aberto.');
+    } finally {
+      setLoadingPrinters(false);
+    }
+  };
 
   const handleCreateCashier = async () => {
     if (!onAddCashier) return;
@@ -125,6 +220,13 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
             }`}
         >
           Cardápio & Delivery Online
+        </button>
+        <button
+          onClick={() => setActiveTab('printer')}
+          className={`pb-4 px-2 font-bold text-sm border-b-2 transition-all ${activeTab === 'printer' ? 'border-accent text-accent' : 'border-transparent text-textSecondary hover:text-textPrimary'
+            }`}
+        >
+          Impressão
         </button>
       </div>
 
@@ -269,9 +371,9 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
                               <div className="flex-1 relative group">
                                 <input
                                   type="password"
-                                  value="123456"
+                                  value="******"
                                   readOnly
-                                  className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-xs text-slate-600 pr-8 password-toggle-input"
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-xs text-slate-600 pr-8"
                                 />
                                 <Eye size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 cursor-pointer hover:text-blue-500" onClick={(e) => {
                                   const input = e.currentTarget.previousElementSibling as HTMLInputElement;
@@ -280,7 +382,7 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
                                 }} />
                               </div>
                             </div>
-                            <p className="text-[10px] text-amber-500 mt-1 italic">* A senha real é criptografada. Exibição simulada.</p>
+                            <p className="text-[10px] text-amber-500 mt-1 italic">* A senha real é criptografada.</p>
                           </div>
                         </div>
                       ))
@@ -292,7 +394,6 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
           </>
         )}
 
-        {/* --- MENU SETTINGS TAB --- */}
         {activeTab === 'menu' && (
           <>
             {/* Online Menu Link */}
@@ -302,7 +403,6 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
               </h2>
               <p className="text-xs text-textSecondary mb-5">Link público para clientes fazerem pedidos de delivery.</p>
 
-              {/* Toggle */}
               <button
                 type="button"
                 onClick={() => setMenuEnabled(e => !e)}
@@ -314,7 +414,6 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
                 {menuEnabled ? <ToggleRight size={28} className="text-emerald-500" /> : <ToggleLeft size={28} className="text-slate-400" />}
               </button>
 
-              {/* Slug input */}
               <div className="mb-4">
                 <label className="block text-xs font-bold text-textSecondary mb-2">Link personalizado</label>
                 <div className="flex items-center border border-border rounded-xl overflow-hidden bg-background">
@@ -326,11 +425,9 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
                     className="flex-1 px-3 py-3 outline-none text-sm bg-background"
                   />
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1">Letras minúsculas, números e hífens apenas.</p>
                 {slugError && <p className="text-xs text-red-500 font-bold mt-1">{slugError}</p>}
               </div>
 
-              {/* Preview + copy */}
               {slug && (
                 <div className="flex items-center gap-2 bg-slate-50 rounded-xl border border-slate-200 px-3 py-2 mb-4 overflow-hidden">
                   <span className="flex-1 text-xs text-slate-600 font-mono truncate">{window.location.origin}/menu/{slug}</span>
@@ -338,10 +435,6 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
                     className={`p-1.5 rounded-lg transition-all ${slugCopied ? 'bg-emerald-100 text-emerald-600' : 'bg-white border border-slate-200 text-slate-500 hover:text-accent'}`}>
                     {slugCopied ? <Check size={14} /> : <Copy size={14} />}
                   </button>
-                  <a href={`/menu/${slug}`} target="_blank" rel="noopener noreferrer"
-                    className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-500 hover:text-accent transition-all" title="Abrir cardápio">
-                    <Globe size={14} />
-                  </a>
                 </div>
               )}
 
@@ -356,70 +449,34 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
               <h2 className="text-xl font-heading font-extrabold text-textPrimary mb-1 flex items-center gap-2">
                 <Sun size={20} className="text-amber-500" /> Identidade Visual
               </h2>
-              <p className="text-xs text-textSecondary mb-6">Escolha a cor que melhor representa sua lanchonete.</p>
-
-              <div className="grid grid-cols-4 gap-4 mb-8">
+              <div className="grid grid-cols-4 gap-4 mb-8 mt-4">
                 {[
-                  { name: 'Laranja (Padrão)', color: '#f97316' },
-                  { name: 'Vermelho Fogo', color: '#ef4444' },
-                  { name: 'Verde Esmeralda', color: '#10b981' },
-                  { name: 'Azul Oceano', color: '#3b82f6' },
-                  { name: 'Rosa Chiclete', color: '#ec4899' },
-                  { name: 'Âmbar Quente', color: '#f59e0b' },
-                  { name: 'Ciano Vibrante', color: '#06b6d4' },
-                  { name: 'Slate Moderno', color: '#475569' },
-                ].map((palette) => (
+                  '#f97316', '#ef4444', '#10b981', '#3b82f6', '#ec4899', '#f59e0b', '#06b6d4', '#475569'
+                ].map((color) => (
                   <button
-                    key={palette.color}
-                    onClick={() => setThemeColor(palette.color)}
-                    title={palette.name}
-                    className={`group relative h-12 rounded-2xl transition-all duration-300 ${themeColor === palette.color ? 'ring-4 ring-offset-2' : 'hover:scale-105'
-                      }`}
-                    style={{
-                      backgroundColor: palette.color,
-                      boxShadow: themeColor === palette.color ? `0 0 20px ${palette.color}40` : 'none',
-                      // @ts-ignore
-                      '--ring-color': palette.color
-                    } as any}
+                    key={color}
+                    onClick={() => setThemeColor(color)}
+                    className={`h-12 rounded-2xl transition-all ${themeColor === color ? 'ring-4 ring-offset-2' : ''}`}
+                    style={{ backgroundColor: color }}
                   >
-                    {themeColor === palette.color && (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <Check size={20} className="text-white drop-shadow-md" />
-                      </div>
-                    )}
+                    {themeColor === color && <Check size={20} className="text-white mx-auto" />}
                   </button>
                 ))}
               </div>
-
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-center gap-4">
-                <div
-                  className="w-10 h-10 rounded-xl shadow-lg flex-shrink-0"
-                  style={{ backgroundColor: themeColor }}
-                />
-                <div className="flex-1">
-                  <p className="text-sm font-bold text-slate-700">Prévia da Cor</p>
-                  <p className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{themeColor}</p>
-                </div>
-                <button
-                  onClick={handleSave}
-                  className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 transition-all shadow-sm"
-                >
-                  Aplicar
-                </button>
-              </div>
+              <button onClick={handleSave} className="w-full py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-600 hover:bg-slate-100 shadow-sm">Aplicar Cor</button>
             </div>
 
-            {/* Online Menu Settings Form (Delivery Rules) */}
+            {/* Delivery Rules */}
             <div className="bg-white rounded-3xl shadow-premium border border-border p-8 h-fit lg:col-span-2">
               <h2 className="text-xl font-heading font-extrabold text-textPrimary mb-6 flex items-center gap-2">
-                <Globe size={20} className="text-accent" /> Regras do Delivery (Cardápio)
+                <Globe size={20} className="text-accent" /> Regras do Delivery
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                 <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 flex items-center justify-between">
                   <div>
                     <p className="font-bold text-sm text-slate-700">Forçar Loja Fechada</p>
-                    <p className="text-xs text-slate-500">Impede pedidos independente do horário</p>
+                    <p className="text-xs text-slate-500">Impede pedidos agora</p>
                   </div>
                   <button
                     onClick={() => setForceClose(!forceClose)}
@@ -429,16 +486,14 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
                   </button>
                 </div>
 
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Abre às</label>
-                      <input type="time" value={openingTime} onChange={e => setOpeningTime(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none focus:border-accent font-mono" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Fecha às</label>
-                      <input type="time" value={closingTime} onChange={e => setClosingTime(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none focus:border-accent font-mono" />
-                    </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Abre às</label>
+                    <input type="time" value={openingTime} onChange={e => setOpeningTime(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none focus:border-accent font-mono" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Fecha às</label>
+                    <input type="time" value={closingTime} onChange={e => setClosingTime(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none focus:border-accent font-mono" />
                   </div>
                 </div>
 
@@ -451,26 +506,178 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
                   <label className="block text-xs font-bold text-slate-500 mb-1">Tempo Estimado</label>
                   <input type="text" placeholder="Ex: 40-50 min" value={estimatedDeliveryTime} onChange={e => setEstimatedDeliveryTime(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none focus:border-accent" />
                 </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-1">Tipos de Pedidos</label>
-                  <select value={allowedOrderTypes} onChange={e => setAllowedOrderTypes(e.target.value as 'DELIVERY' | 'PICKUP' | 'BOTH' | 'VIEW_ONLY')} className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none focus:border-accent font-bold text-slate-700 text-sm">
-                    <option value="BOTH">Delivery e Retirada</option>
-                    <option value="DELIVERY">Apenas Delivery</option>
-                    <option value="PICKUP">Apenas Retirada</option>
-                    <option value="VIEW_ONLY">Apenas Visualização</option>
-                  </select>
-                </div>
               </div>
 
-              <button onClick={handleSave} className="w-full md:w-auto px-8 bg-accent text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2 float-right hover:bg-orange-600 transition-colors">
-                <Save size={18} /> Salvar Regras
+              <button onClick={handleSave} className="w-full md:w-auto px-8 bg-accent text-white font-bold py-3 rounded-xl shadow-lg hover:bg-orange-600 transition-colors">
+                Salvar Regras
               </button>
-              <div className="clear-both"></div>
             </div>
           </>
         )}
+
+        {/* --- PRINTER SETTINGS TAB --- */}
+        {activeTab === 'printer' && (
+          <div className="lg:col-span-2 space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <div className="bg-white rounded-3xl shadow-premium border border-border p-8 h-fit">
+              <h2 className="text-xl font-heading font-extrabold text-textPrimary mb-1 flex items-center gap-2">
+                <Printer size={20} className="text-accent" /> Configurações de Impressão Térmica
+              </h2>
+              <p className="text-xs text-textSecondary mb-8">Configure sua impressora térmica ESC/POS para automação de despacho.</p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Conexão */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                    <Wifi size={16} className="text-blue-500" /> Comunicação
+                  </h3>
+
+                  <div>
+                    <label className="block text-xs font-bold text-textSecondary mb-1">Tipo de Conexão</label>
+                    <select
+                      value={printerSettings?.connection_type || 'TCP_IP'}
+                      onChange={e => setPrinterSettings(s => s ? { ...s, connection_type: e.target.value as any } : null)}
+                      className="w-full bg-background border border-border rounded-xl p-3 outline-none focus:border-accent font-bold"
+                    >
+                      <option value="TCP_IP">Rede / IP (Porta 9100)</option>
+                      <option value="LOCAL">Impressora do Sistema (Windows)</option>
+                      <option value="USB">USB (via Bridge)</option>
+                      <option value="SERIAL">Serial / COM</option>
+                    </select>
+                  </div>
+
+                  {printerSettings?.connection_type === 'LOCAL' && (
+                    <div className="space-y-4 p-4 bg-orange-50 border border-orange-100 rounded-2xl animate-in zoom-in-95 duration-200">
+                      <div>
+                        <label className="block text-xs font-bold text-orange-700 mb-2">Selecione a Impressora</label>
+                        <div className="flex gap-2">
+                          <select
+                            value={printerSettings?.local_printer_name || ''}
+                            onChange={e => setPrinterSettings(s => s ? { ...s, local_printer_name: e.target.value } : null)}
+                            className="flex-1 bg-white border border-orange-200 rounded-xl p-3 outline-none focus:border-accent font-bold text-sm"
+                          >
+                            <option value="">Selecione...</option>
+                            {/* Garante que o nome salvo apareça mesmo se a lista não carregou ainda */}
+                            {printerSettings?.local_printer_name && !localPrinters.find(p => p.Name === printerSettings.local_printer_name) && (
+                              <option value={printerSettings.local_printer_name}>{printerSettings.local_printer_name} (Salva)</option>
+                            )}
+                            {localPrinters.map(p => (
+                              <option key={p.Name} value={p.Name}>{p.Name}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={fetchLocalPrinters}
+                            disabled={loadingPrinters}
+                            className="bg-white border border-orange-200 text-accent px-4 rounded-xl hover:bg-orange-100 transition-colors disabled:opacity-50"
+                          >
+                            {loadingPrinters ? '...' : <Plus size={18} />}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-orange-600 mt-2 font-medium">Clique no botão lateral para listar as impressoras do Windows.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="col-span-2">
+                      <label className="block text-xs font-bold text-textSecondary mb-1">IP da Impressora</label>
+                      <input
+                        value={printerSettings?.ip_address || ''}
+                        onChange={e => setPrinterSettings(s => s ? { ...s, ip_address: e.target.value } : null)}
+                        placeholder="127.0.0.1"
+                        className="w-full bg-background border border-border rounded-xl p-3 outline-none focus:border-accent font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-textSecondary mb-1">Porta</label>
+                      <input
+                        type="number"
+                        value={printerSettings?.port || 9100}
+                        onChange={e => setPrinterSettings(s => s ? { ...s, port: parseInt(e.target.value) } : null)}
+                        className="w-full bg-background border border-border rounded-xl p-3 outline-none focus:border-accent font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Preferências */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                    <FileText size={16} className="text-accent" /> Regras de Automação
+                  </h3>
+
+                  <div>
+                    <label className="block text-xs font-bold text-textSecondary mb-2">Tamanho do Papel</label>
+                    <div className="flex gap-2">
+                      {['58mm', '80mm'].map(size => (
+                        <button
+                          key={size}
+                          onClick={() => setPrinterSettings(s => s ? { ...s, paper_size: size as any } : null)}
+                          className={`flex-1 py-3 rounded-xl border-2 font-black transition-all ${printerSettings?.paper_size === size ? 'border-accent bg-orange-50 text-accent' : 'border-slate-50 bg-slate-50 text-slate-400'}`}
+                        >
+                          {size}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      <div>
+                        <p className="font-bold text-sm text-slate-700">Vendas de Balcão</p>
+                        <p className="text-[10px] text-slate-400">Imprimir automaticamente</p>
+                      </div>
+                      <button
+                        onClick={() => setPrinterSettings(s => s ? { ...s, print_counter_sales: !s.print_counter_sales } : null)}
+                        className={`w-12 h-7 rounded-full transition-all flex items-center px-1 ${printerSettings?.print_counter_sales ? 'bg-emerald-500 justify-end' : 'bg-slate-300 justify-start'}`}
+                      >
+                        <div className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      <div>
+                        <p className="font-bold text-sm text-slate-700">Pedidos de Delivery</p>
+                        <p className="text-[10px] text-slate-400">Imprimir automaticamente</p>
+                      </div>
+                      <button
+                        onClick={() => setPrinterSettings(s => s ? { ...s, print_delivery_sales: !s.print_delivery_sales } : null)}
+                        className={`w-12 h-7 rounded-full transition-all flex items-center px-1 ${printerSettings?.print_delivery_sales ? 'bg-emerald-500 justify-end' : 'bg-slate-300 justify-start'}`}
+                      >
+                        <div className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col md:flex-row gap-4 mt-10">
+                <button
+                  onClick={handleTestPrint}
+                  className="flex-1 py-4 bg-white border border-slate-200 text-slate-700 font-black rounded-2xl hover:bg-slate-50 transition-all flex items-center justify-center gap-2 active:scale-95 shadow-sm"
+                >
+                  <Printer size={18} /> Testar Impressão
+                </button>
+                <button
+                  onClick={handleSavePrinter}
+                  className="flex-[2] py-4 bg-accent text-white font-black rounded-2xl shadow-xl shadow-orange-500/20 hover:bg-orange-600 transition-all flex items-center justify-center gap-2 active:scale-95"
+                >
+                  <Save size={18} /> Salvar Configurações
+                </button>
+              </div>
+            </div>
+
+            <div className={`p-6 rounded-3xl border border-blue-100 bg-blue-50/50 flex gap-4 items-start`}>
+              <div className="p-2 bg-blue-500 rounded-lg text-white"><Shield size={18} /></div>
+              <div>
+                <p className="text-sm font-bold text-blue-900">Nota técnica sobre o TCP/IP</p>
+                <p className="text-xs text-blue-700 mt-1 leading-relaxed">
+                  Devido às restrições de segurança do navegador, a impressão direta em rede requer um <b>Bridge Local</b> (como o <i>escpos_emulator</i> ou um proxy HTTP/WebSocket) rodando na mesma rede que a impressora.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
-    </div >
+    </div>
   );
 };

@@ -18,10 +18,10 @@ export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitc
 
   // V10: Independent Kitchen View Logic
   // Left: Preparing
-  const prepOrders = orders.filter(o => o.status === 'PREPARING').sort((a, b) => a.createdAt - b.createdAt);
+  const prepOrders = orders.filter(o => o && o.status === 'PREPARING').sort((a, b) => a.createdAt - b.createdAt);
 
   // Right: Ready AND NOT Dismissed by kitchen (regardless of payment/delivery status)
-  const readyOrders = orders.filter(o => o.status === 'READY' && !o.kitchenDismissed).sort((a, b) => b.createdAt - a.createdAt);
+  const readyOrders = orders.filter(o => o && o.status === 'READY' && !o.kitchenDismissed).sort((a, b) => b.createdAt - a.createdAt);
 
   const getElapsedTime = (timestamp: number) => Math.floor((now - timestamp) / 60000);
   const getCardStyle = (minutes: number) => minutes > 20 ? 'border-l-danger bg-red-50' : minutes > 10 ? 'border-l-highlight bg-yellow-50' : 'border-l-success bg-white';
@@ -75,7 +75,7 @@ export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitc
                       {item.selectedAddOns && item.selectedAddOns.length > 0 && (
                         <div className="flex flex-wrap gap-1 ml-6 mt-1">
                           {item.selectedAddOns.map((addon, aIdx) => (
-                            <span key={aIdx} className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-bold">+ {addon.name}</span>
+                            <span key={aIdx} className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-bold">+ {addon.quantity}x {addon.name}</span>
                           ))}
                         </div>
                       )}
@@ -144,7 +144,7 @@ export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitc
                     {item.selectedAddOns && item.selectedAddOns.length > 0 && (
                       <div className="flex flex-wrap gap-1 ml-6 mt-1">
                         {item.selectedAddOns.map((addon, aIdx) => (
-                          <span key={aIdx} className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold">+ {addon.name}</span>
+                          <span key={aIdx} className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold">+ {addon.quantity}x {addon.name}</span>
                         ))}
                       </div>
                     )}

@@ -9,58 +9,74 @@ interface ReportsProps {
 }
 
 export const Reports: React.FC<ReportsProps> = ({ orders, dailyHistory = [] }) => {
-  const today = new Date();
-  const todayDay = today.getDate().toString().padStart(2, '0');
-  const todayMonth = (today.getMonth() + 1).toString().padStart(2, '0');
-  const todayYear = today.getFullYear().toString();
+  const getBusinessDate = (date: Date) => {
+    const d = new Date(date);
+    if (d.getHours() < 6) {
+      d.setDate(d.getDate() - 1);
+    }
+    return d;
+  };
 
-  const [selectedDay, setSelectedDay] = useState<string>('todos');
-  const [selectedMonth, setSelectedMonth] = useState<string>('todos');
+  const bizDate = getBusinessDate(new Date());
+  const todayDay = bizDate.getDate().toString().padStart(2, '0');
+  const todayMonth = (bizDate.getMonth() + 1).toString().padStart(2, '0');
+  const todayYear = bizDate.getFullYear().toString();
+
+  const [selectedDay, setSelectedDay] = useState<string>(todayDay);
+  const [selectedMonth, setSelectedMonth] = useState<string>(todayMonth);
   const [selectedYear, setSelectedYear] = useState<string>(todayYear);
 
   // V10: Dashboard reads from Paid orders (Financial View).
   // Includes ARCHIVED (completed) or just marked as isPaid.
-  let currentOrders: Order[] = [];
+  // Determine the business day for any given timestamp (6 AM rollover)
+  const getOrderBusinessDay = (timestamp: number) => {
+    const date = new Date(timestamp);
+    const hour = date.getHours();
 
-  // Filter historic orders
-  const historicOrders = dailyHistory
-    .filter(h => {
-      const parts = (h.date || h.id || '').split('T')[0].split('-');
-      if (parts.length < 3) return false;
-      const [y, m, d] = parts;
+    // If before 6 AM, it belongs to the previous calendar day
+    if (hour < 6) {
+      date.setDate(date.getDate() - 1);
+    }
 
-      if (selectedYear !== 'todos' && y !== selectedYear) return false;
-      if (selectedMonth !== 'todos' && m !== selectedMonth) return false;
-      if (selectedDay !== 'todos' && d !== selectedDay) return false;
-      return true;
-    })
-    .flatMap(h => h.orders);
+    return {
+      day: date.getDate().toString().padStart(2, '0'),
+      month: (date.getMonth() + 1).toString().padStart(2, '0'),
+      year: date.getFullYear().toString()
+    };
+  };
 
-  // Filter live orders (not archived yet)
-  const liveOrders = orders.filter(o => {
-    const dObj = new Date(o.createdAt);
-    const y = dObj.getFullYear().toString();
-    const m = (dObj.getMonth() + 1).toString().padStart(2, '0');
-    const d = dObj.getDate().toString().padStart(2, '0');
+  // Collect ALL orders from both history and live state
+  const allAvailableOrders = [
+    ...(dailyHistory.flatMap(h => h.orders || [])),
+    ...orders
+  ];
 
-    if (selectedYear !== 'todos' && y !== selectedYear) return false;
-    if (selectedMonth !== 'todos' && m !== selectedMonth) return false;
-    if (selectedDay !== 'todos' && d !== selectedDay) return false;
-    return true;
+  // Apply filters based on the individual order's business day
+  const filteredOrders = allAvailableOrders.filter(o => {
+    if (!o || !o.id || !o.createdAt) return false;
+
+    const bizDay = getOrderBusinessDay(o.createdAt);
+
+    if (selectedYear !== 'todos' && bizDay.year !== selectedYear) return false;
+    if (selectedMonth !== 'todos' && bizDay.month !== selectedMonth) return false;
+    if (selectedDay !== 'todos' && bizDay.day !== selectedDay) return false;
+
+    // Only count paid or archived orders in financial reports
+    return (o.isPaid || o.status === 'ARCHIVED') && o.status !== 'CANCELLED';
   });
 
-  currentOrders = [...historicOrders, ...liveOrders];
-
-  const includesToday = liveOrders.length > 0;
-
-  // Deduplicate by ID
+  // Unique orders only (deduplicate by ID across history/live)
   const uniqueOrdersMap = new Map<string, Order>();
-  currentOrders.forEach(o => {
-    uniqueOrdersMap.set(o.id, o);
-  });
-  currentOrders = Array.from(uniqueOrdersMap.values());
+  filteredOrders.forEach(o => uniqueOrdersMap.set(o.id, o));
+  const paidOrders = Array.from(uniqueOrdersMap.values());
+  const currentOrders = paidOrders; // Backward compatibility for following logic
 
-  const paidOrders = currentOrders.filter(o => o.isPaid || o.status === 'ARCHIVED');
+  const isViewingToday = selectedDay === todayDay && selectedMonth === todayMonth && selectedYear === todayYear;
+  const liveOrdersInView = orders.filter(o => {
+    const bizDay = getOrderBusinessDay(o.createdAt);
+    return bizDay.day === todayDay && bizDay.month === todayMonth && bizDay.year === todayYear;
+  }).length;
+  const includesToday = isViewingToday && liveOrdersInView > 0;
 
   const totalSales = paidOrders.reduce((acc, o) => acc + o.total, 0);
   const totalOrders = paidOrders.length;

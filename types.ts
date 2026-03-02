@@ -24,11 +24,14 @@ export interface RecipeItem {
   amount: number;
 }
 
-// V12: AddOn Interface
 export interface AddOn {
   id: string;
   name: string;
   price: number;
+}
+
+export interface SelectedAddOn extends AddOn {
+  quantity: number;
 }
 
 export interface Product {
@@ -47,7 +50,7 @@ export interface CartItem extends Product {
   cartId: string;
   quantity: number;
   notes?: string;
-  selectedAddOns?: AddOn[]; // V12: AddOns selected for this specific item
+  selectedAddOns?: SelectedAddOn[]; // V12: AddOns selected for this specific item
 }
 
 export interface Ingredient {
@@ -202,4 +205,16 @@ export interface DailyHistory {
   drivers: Driver[]; // Snapshot of drivers performance
   closedAt: number;
   closedBy: string;
+}
+
+export interface PrinterSettings {
+  id?: string;
+  tenant_id?: string;
+  connection_type: 'USB' | 'TCP_IP' | 'SERIAL' | 'LOCAL';
+  ip_address: string;
+  port: number;
+  paper_size: '58mm' | '80mm';
+  print_counter_sales: boolean;
+  print_delivery_sales: boolean;
+  local_printer_name?: string;
 }

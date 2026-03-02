@@ -77,21 +77,109 @@ export const CashFlow: React.FC<CashFlowProps> = ({
 
 
     // --- Calculations ---
+    const combinedOrders = React.useMemo(() => {
+        const historyOrders = (dailyHistory || []).flatMap((h: any) => h.orders || []);
+        const all = [...orders, ...historyOrders];
+        // Deduplicate by ID to avoid double counting
+        const map = new Map();
+        all.forEach(o => {
+            if (o && o.id) map.set(o.id, o);
+        });
+        return Array.from(map.values()) as Order[];
+    }, [orders, dailyHistory]);
 
     // Helper to filter orders for a session
     const getSessionOrders = (session: CashRegisterSession) => {
-        return orders.filter(o =>
-            o.createdAt >= session.openedAt &&
-            (session.closedAt ? o.createdAt <= session.closedAt : true) &&
-            o.status !== 'CANCELLED'
+        const openedAtTime = new Date(session.openedAt).getTime();
+        const closedAtTime = session.closedAt ? new Date(session.closedAt).getTime() : Infinity;
+
+        // V17: Robust Last Closure Detection - find the most recent closure BEFORE this session opened
+        const prevClosedSessions = history.filter(h =>
+            h.status === 'CLOSED' &&
+            h.closedAt &&
+            new Date(h.closedAt).getTime() < (openedAtTime - 1000)
         );
+        const lastClosure = prevClosedSessions.sort((a, b) =>
+            new Date(b.closedAt!).getTime() - new Date(a.openedAt!).getTime()
+        )[0];
+
+        const lastClosureTime = lastClosure && lastClosure.closedAt ? new Date(lastClosure.closedAt).getTime() : 0;
+
+        // Use a 12h window max for the start of an OPEN session (resilience), but strictly capped by last closure
+        const buffer = 5 * 60 * 1000;
+        const effectiveStart = session.status === 'OPEN'
+            ? Math.max(openedAtTime - (12 * 60 * 60 * 1000), lastClosureTime)
+            : openedAtTime - buffer;
+
+        return combinedOrders.filter(o => {
+            const orderTime = new Date(o.createdAt).getTime();
+            return orderTime >= effectiveStart &&
+                orderTime <= (closedAtTime + buffer) &&
+                o.status !== 'CANCELLED'
+        });
     };
+
+    const formatLocalDate = (date: Date) => {
+        return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
+    };
+
+    const availableDates = React.useMemo(() => {
+        const dates = new Set<string>();
+        history.forEach(h => {
+            dates.add(formatLocalDate(new Date(h.openedAt)));
+            if (h.closedAt) dates.add(formatLocalDate(new Date(h.closedAt)));
+        });
+        return Array.from(dates).sort().reverse();
+    }, [history]);
+
+    // V19: Multi-session support per day - filter by open OR close date
+    const daySessions = React.useMemo(() => {
+        if (viewMode === 'CURRENT') return [];
+        return history.filter(h => {
+            const openD = formatLocalDate(new Date(h.openedAt));
+            const closeD = h.closedAt ? formatLocalDate(new Date(h.closedAt)) : null;
+            return openD === selectedHistoryDate || closeD === selectedHistoryDate;
+        }).sort((a, b) => b.openedAt - a.openedAt);
+    }, [history, selectedHistoryDate, viewMode]);
+
+    const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
     const activeSession = viewMode === 'CURRENT'
         ? currentSession
-        : history.find(h => new Date(h.openedAt).toISOString().split('T')[0] === selectedHistoryDate);
+        : selectedSessionId
+            ? daySessions.find(s => s.id === selectedSessionId) || daySessions[0]
+            : daySessions[0];
+
+    // Reset session selection when date changes
+    useEffect(() => {
+        setSelectedSessionId(null);
+    }, [selectedHistoryDate]);
 
     const activeOrders = activeSession ? getSessionOrders(activeSession) : [];
+
+    // V18: Consolidated Movements List (Sales + Manual)
+    const consolidatedMovements = React.useMemo(() => {
+        if (!activeSession) return [];
+
+        const salesMovements = activeOrders.map(o => ({
+            id: `sale-${o.id}`,
+            data_hora: o.createdAt,
+            tipo: 'Venda',
+            descricao: `Venda #${o.displayId} - ${o.paymentMethod || 'N/A'}`,
+            valor: o.total,
+            responsavel: 'Balcão',
+            isSale: true
+        }));
+
+        const manualMovements = movimentacoes.map(m => ({
+            ...m,
+            isSale: false
+        }));
+
+        return [...salesMovements, ...manualMovements].sort((a, b) =>
+            new Date(b.data_hora || 0).getTime() - new Date(a.data_hora || 0).getTime()
+        );
+    }, [activeOrders, movimentacoes, activeSession?.id]);
 
     useEffect(() => {
         const fetchMovimentacoes = async () => {
@@ -123,8 +211,9 @@ export const CashFlow: React.FC<CashFlowProps> = ({
                     return;
                 }
 
+                let mapped: MovimentacaoView[] = [];
                 if (data && data.length > 0) {
-                    const mapped = data.map((t: any) => ({
+                    mapped = data.map((t: any) => ({
                         id: t.id,
                         data_hora: t.data_hora,
                         tipo: t.tipo, // 'Sangria' | 'Suprimento'
@@ -132,9 +221,8 @@ export const CashFlow: React.FC<CashFlowProps> = ({
                         valor: t.valor,
                         responsavel: t.responsavel || 'Operador'
                     }));
-                    setMovimentacoes(mapped);
-                } else if (activeSession.transactions?.length > 0) {
-                    const mapped = [...activeSession.transactions]
+                } else if (activeSession.transactions && activeSession.transactions.length > 0) {
+                    mapped = [...activeSession.transactions]
                         .sort((a, b) => b.timestamp - a.timestamp)
                         .map(t => ({
                             id: t.id,
@@ -144,28 +232,48 @@ export const CashFlow: React.FC<CashFlowProps> = ({
                             valor: t.amount,
                             responsavel: t.userId || 'Gerente'
                         }));
-                    setMovimentacoes(mapped);
-                } else {
-                    setMovimentacoes([]);
                 }
+                setMovimentacoes(mapped);
             } catch (err) {
                 console.error("Erro geral no fetch de movimentacoes:", err);
             }
         };
 
         fetchMovimentacoes();
-    }, [activeSession?.id]);
+    }, [activeSession?.id, activeSession?.transactions]);
 
-    // Totals
-    const totalSales = activeOrders.reduce((sum, o) => sum + o.total, 0);
-    const totalSupply = activeSession?.transactions.filter(t => t.type === 'SUPPLY').reduce((sum, t) => sum + t.amount, 0) || 0;
-    const totalBleed = activeSession?.transactions.filter(t => t.type === 'BLEED').reduce((sum, t) => sum + t.amount, 0) || 0;
+    // Totals - Use the calculated activeOrders (which are already paid/archived)
+    // Totals - Use saved totals for closed sessions (Historical Accuracy)
+    // Fallback to calculation for CURRENT session or if saved totals are missing.
+    const isClosed = activeSession?.status === 'CLOSED';
 
-    // Payment Methods Breakdown
-    const salesByMethod = activeOrders.reduce((acc, o) => {
-        acc[o.paymentMethod] = (acc[o.paymentMethod] || 0) + o.total;
-        return acc;
-    }, {} as Record<PaymentMethod, number>);
+    const totalSupply = (isClosed && activeSession?.totalSupplies !== undefined)
+        ? activeSession.totalSupplies
+        : movimentacoes.filter(t => t.tipo === 'Suprimento').reduce((sum, t) => sum + t.valor, 0);
+
+    const totalBleed = (isClosed && activeSession?.totalBleeds !== undefined)
+        ? activeSession.totalBleeds
+        : movimentacoes.filter(t => t.tipo === 'Sangria').reduce((sum, t) => sum + t.valor, 0);
+
+    const totalSales = (isClosed && activeSession?.totalSales !== undefined)
+        ? activeSession.totalSales
+        : activeOrders.reduce((sum, o) => sum + o.total, 0);
+
+    // Payment Methods Breakdown (Prioritize saved values)
+    const salesByMethod = React.useMemo(() => {
+        if (isClosed && activeSession?.totalPix !== undefined) {
+            return {
+                'CASH': activeSession.totalMoney || 0,
+                'CREDIT': activeSession.totalCardCredit || 0,
+                'DEBIT': activeSession.totalCardDebit || 0,
+                'PIX': activeSession.totalPix || 0,
+            } as any;
+        }
+        return activeOrders.reduce((acc, o) => {
+            acc[o.paymentMethod] = (acc[o.paymentMethod] || 0) + o.total;
+            return acc;
+        }, {} as Record<PaymentMethod, number>);
+    }, [activeOrders, activeSession, isClosed]);
 
     const chartData = [
         { name: 'Dinheiro', value: salesByMethod['CASH'] || 0, color: '#10B981' },
@@ -312,15 +420,42 @@ export const CashFlow: React.FC<CashFlowProps> = ({
             </div>
 
             {viewMode === 'HISTORY' && (
-                <div className={`p-4 rounded-xl border flex items-center gap-4 ${isDark ? 'bg-white/5 border-white/5' : 'bg-white border-slate-200'}`}>
-                    <Calendar className={isDark ? 'text-slate-400' : 'text-slate-500'} />
-                    <input
-                        type="date"
-                        value={selectedHistoryDate}
-                        onChange={e => setSelectedHistoryDate(e.target.value)}
-                        className={`bg-transparent outline-none font-bold ${isDark ? 'text-white' : 'text-slate-800'}`}
-                    />
-                    {!activeSession && <span className="text-red-500 text-sm font-bold ml-auto">Nenhum caixa registrado nesta data.</span>}
+                <div className="flex flex-col gap-4">
+                    <div className="flex flex-wrap items-center gap-3">
+                        <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${isDark ? 'bg-white/5 border-white/5 text-white' : 'bg-white border-slate-200 text-slate-700'} shadow-sm`}>
+                            <Calendar size={16} className="text-blue-500" />
+                            <select
+                                value={selectedHistoryDate}
+                                onChange={(e) => setSelectedHistoryDate(e.target.value)}
+                                className="bg-transparent font-bold text-sm outline-none cursor-pointer"
+                            >
+                                {availableDates.map(date => (
+                                    <option key={date} value={date} className={isDark ? 'bg-slate-800' : ''}>
+                                        {new Date(date + 'T12:00:00').toLocaleDateString('pt-BR')}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {daySessions.length > 1 && (
+                            <div className={`flex items-center gap-1 p-1 rounded-xl border ${isDark ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'}`}>
+                                {daySessions.map((session, idx) => (
+                                    <button
+                                        key={session.id}
+                                        onClick={() => setSelectedSessionId(session.id)}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${activeSession?.id === session.id
+                                                ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
+                                                : isDark ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-800 hover:bg-white'
+                                            }`}
+                                    >
+                                        Turno #{daySessions.length - idx} ({new Date(session.openedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })})
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        {!activeSession && <span className="text-red-500 text-sm font-bold animate-pulse">Nenhum caixa registrado nesta data.</span>}
+                    </div>
                 </div>
             )}
 
@@ -495,9 +630,9 @@ export const CashFlow: React.FC<CashFlowProps> = ({
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {movimentacoes.length > 0 || activeOrders.length > 0 ? (
+                                    {consolidatedMovements.length > 0 ? (
                                         <>
-                                            {movimentacoes.map((item, idx) => (
+                                            {consolidatedMovements.map((item, idx) => (
                                                 <tr
                                                     key={`mov-${item.id}`}
                                                     className={`border-b transition-colors ${isDark
@@ -512,57 +647,31 @@ export const CashFlow: React.FC<CashFlowProps> = ({
                                                     </td>
                                                     <td className="py-4 px-6">
                                                         <div className="flex justify-center">
-                                                            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wide ${item.tipo === 'Sangria'
-                                                                ? 'bg-red-500/10 text-red-500 border border-red-500/20'
-                                                                : 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
-                                                                }`}>
-                                                                {item.tipo === 'Sangria' ? <ArrowUpCircle size={13} /> : <ArrowDownCircle size={13} />}
-                                                                {item.tipo || 'MOVIMENTAÇÃO'}
-                                                            </span>
+                                                            {item.isSale ? (
+                                                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wide bg-blue-500/10 text-blue-600 border border-blue-500/20">
+                                                                    <ShoppingBag size={13} />
+                                                                    {item.tipo}
+                                                                </span>
+                                                            ) : (
+                                                                <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wide ${item.tipo === 'Sangria'
+                                                                    ? 'bg-red-500/10 text-red-500 border border-red-500/20'
+                                                                    : 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+                                                                    }`}>
+                                                                    {item.tipo === 'Sangria' ? <ArrowUpCircle size={13} /> : <ArrowDownCircle size={13} />}
+                                                                    {item.tipo || 'MOVIMENTAÇÃO'}
+                                                                </span>
+                                                            )}
                                                         </div>
                                                     </td>
                                                     <td className={`py-4 px-6 text-sm font-semibold ${isDark ? 'text-white' : 'text-slate-800'}`}>
                                                         {item.descricao || 'Sem descrição'}
                                                     </td>
-                                                    <td className={`py-4 px-6 text-right text-sm font-black tabular-nums ${item.tipo === 'Sangria' ? 'text-red-500' : 'text-emerald-600'
+                                                    <td className={`py-4 px-6 text-right text-sm font-black tabular-nums ${item.isSale ? 'text-blue-600' : item.tipo === 'Sangria' ? 'text-red-500' : 'text-emerald-600'
                                                         }`}>
                                                         {item.tipo === 'Sangria' ? '−' : '+'}&nbsp;R$&nbsp;{(item.valor || 0).toFixed(2)}
                                                     </td>
                                                     <td className={`py-4 px-6 text-right text-sm ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
                                                         {item.responsavel || 'Operador'}
-                                                    </td>
-                                                </tr>
-                                            ))}
-
-                                            {activeOrders.map((o, idx) => (
-                                                <tr
-                                                    key={`ord-${o.id}`}
-                                                    className={`border-b transition-colors ${isDark
-                                                        ? `border-white/5 ${(movimentacoes.length + idx) % 2 === 0 ? '' : 'bg-white/[0.02]'} hover:bg-white/[0.04]`
-                                                        : `border-slate-100 ${(movimentacoes.length + idx) % 2 === 0 ? '' : 'bg-slate-50/50'} hover:bg-blue-50/30`
-                                                        }`}
-                                                >
-                                                    <td className={`py-4 px-6 text-sm font-medium ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                                                        {o.createdAt
-                                                            ? new Date(o.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-                                                            : '--:--'}
-                                                    </td>
-                                                    <td className="py-4 px-6">
-                                                        <div className="flex justify-center">
-                                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wide bg-blue-500/10 text-blue-600 border border-blue-500/20">
-                                                                <ShoppingBag size={13} />
-                                                                VENDA #{o.displayId || '---'}
-                                                            </span>
-                                                        </div>
-                                                    </td>
-                                                    <td className={`py-4 px-6 text-sm font-semibold ${isDark ? 'text-white' : 'text-slate-800'}`}>
-                                                        Pagamento em&nbsp;<span className="font-black">{o.paymentMethod || 'N/A'}</span>
-                                                    </td>
-                                                    <td className="py-4 px-6 text-right text-sm font-black tabular-nums text-blue-600">
-                                                        +&nbsp;R$&nbsp;{(o.total || 0).toFixed(2)}
-                                                    </td>
-                                                    <td className={`py-4 px-6 text-right text-sm ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
-                                                        Balcão
                                                     </td>
                                                 </tr>
                                             ))}

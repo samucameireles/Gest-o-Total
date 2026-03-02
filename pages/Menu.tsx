@@ -30,26 +30,15 @@ import {
   Sun,
   ChevronRight,
 } from "lucide-react";
-import { AddOn } from "../types";
+import { AddOn, SelectedAddOn, StoreSettings, Coupon, Product, OrderType, PaymentMethod, NeighborhoodFee, Customer } from "../types";
 
-interface Product {
-  id: string;
-  name: string;
-  price: number;
-  description: string;
-  image: string;
-  image_url?: string;
-  category: string;
-  allowObservations?: boolean;
-  recipe?: { ingredientId: string; amount: number }[];
-  allowedAddOns?: string[];
-}
+
 
 interface CartItem extends Product {
   cartId: string;
   quantity: number;
   notes?: string;
-  selectedAddOns?: AddOn[];
+  selectedAddOns?: SelectedAddOn[];
 }
 
 interface TenantInfo {
@@ -83,11 +72,7 @@ interface TenantInfo {
   theme_color?: string;
 }
 
-interface NeighborhoodFee {
-  id: string;
-  name: string;
-  price: number;
-}
+
 
 interface OrderForm {
   customerName: string;
@@ -99,12 +84,7 @@ interface OrderForm {
   notes: string;
 }
 
-interface Coupon {
-  id: string;
-  code: string;
-  discountPercent: number;
-  active: boolean;
-}
+
 
 const normalizeText = (text: string | null | undefined) => {
   if (!text) return "";
@@ -167,7 +147,7 @@ export default function Menu() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [modalQuantity, setModalQuantity] = useState(1);
   const [modalNotes, setModalNotes] = useState("");
-  const [modalSelectedAddOns, setModalSelectedAddOns] = useState<AddOn[]>([]);
+  const [modalSelectedAddOns, setModalSelectedAddOns] = useState<SelectedAddOn[]>([]);
   const [showAllCategories, setShowAllCategories] = useState(false);
 
   useEffect(() => {
@@ -364,12 +344,18 @@ export default function Menu() {
     setModalSelectedAddOns([]);
   };
 
-  const handleToggleAddOn = (addon: AddOn) => {
+  const handleAddOnQty = (addon: AddOn, delta: number) => {
     setModalSelectedAddOns((prev) => {
-      if (prev.find((a) => a.id === addon.id)) {
-        return prev.filter((a) => a.id !== addon.id);
+      const existing = prev.find((a) => a.id === addon.id);
+      if (existing) {
+        const newQty = existing.quantity + delta;
+        if (newQty <= 0) return prev.filter((a) => a.id !== addon.id);
+        return prev.map((a) =>
+          a.id === addon.id ? { ...a, quantity: newQty } : a,
+        );
       }
-      return [...prev, addon];
+      if (delta > 0) return [...prev, { ...addon, quantity: 1 }];
+      return prev;
     });
   };
 
@@ -381,8 +367,8 @@ export default function Menu() {
         (i) =>
           i.id === selectedProduct.id &&
           i.notes === modalNotes &&
-          JSON.stringify(i.selectedAddOns?.map((a) => a.id).sort()) ===
-          JSON.stringify(modalSelectedAddOns.map((a) => a.id).sort()),
+          JSON.stringify(i.selectedAddOns?.map((a) => ({ id: a.id, quantity: a.quantity })).sort((a, b) => a.id.localeCompare(b.id))) ===
+          JSON.stringify(modalSelectedAddOns.map((a) => ({ id: a.id, quantity: a.quantity })).sort((a, b) => a.id.localeCompare(b.id))),
       );
 
       if (existingSameNotesAndAddons) {
@@ -400,7 +386,7 @@ export default function Menu() {
           cartId: Math.random().toString(36).substr(2, 9),
           quantity: modalQuantity,
           notes: modalNotes,
-          selectedAddOns: modalSelectedAddOns,
+          selectedAddOns: [...modalSelectedAddOns],
         },
       ];
     });
@@ -436,7 +422,7 @@ export default function Menu() {
 
   const cartTotal = cart.reduce((s, i) => {
     const addonsTotal =
-      i.selectedAddOns?.reduce((sum, a) => sum + a.price, 0) || 0;
+      i.selectedAddOns?.reduce((sum, a) => sum + a.price * a.quantity, 0) || 0;
     return s + (i.price + addonsTotal) * i.quantity;
   }, 0);
   const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
@@ -595,6 +581,7 @@ export default function Menu() {
               order_item_id: itemData.id,
               addon_id: a.id,
               price_at_time: a.price,
+              quantity: a.quantity,
             })),
           );
         }
@@ -946,7 +933,7 @@ export default function Menu() {
                     {isHorizontal ? (
                       <div className="flex gap-4 overflow-x-auto pb-4 snap-x no-scrollbar -mx-4 px-4">
                         {category.products.map((product) => {
-                          const imgSrc = product.image_url || product.image;
+                          const imgSrc = product.image;
                           const qty = cart
                             .filter((i) => i.id === product.id)
                             .reduce((s, i) => s + i.quantity, 0);
@@ -997,7 +984,7 @@ export default function Menu() {
                     ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {category.products.map((product) => {
-                          const imgSrc = product.image_url || product.image;
+                          const imgSrc = product.image;
                           const qty = cart
                             .filter((i) => i.id === product.id)
                             .reduce((s, i) => s + i.quantity, 0);
@@ -1191,9 +1178,9 @@ export default function Menu() {
             <div className="relative bg-slate-50 rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-4 sm:zoom-in-95 duration-300 max-w-md mx-auto w-full shadow-2xl">
               {/* Modal Header/Image */}
               <div className="relative h-[30vh] bg-slate-100 flex-shrink-0">
-                {selectedProduct.image_url || selectedProduct.image ? (
+                {selectedProduct.image ? (
                   <img
-                    src={selectedProduct.image_url || selectedProduct.image}
+                    src={selectedProduct.image}
                     alt={selectedProduct.name}
                     className="w-full h-full object-cover transition-all duration-300"
                   />
@@ -1247,38 +1234,52 @@ export default function Menu() {
                             selectedProduct.allowedAddOns?.includes(a.id),
                           )
                           .map((addon) => {
-                            const isSelected = modalSelectedAddOns.find(
+                            const selectedAddon = modalSelectedAddOns.find(
                               (a) => a.id === addon.id,
                             );
+                            const q = selectedAddon ? selectedAddon.quantity : 0;
                             return (
                               <div
                                 key={addon.id}
-                                onClick={() => handleToggleAddOn(addon)}
-                                className={`flex items-center justify-between p-4 cursor-pointer rounded-2xl border transition-all active:scale-[0.98] ${isSelected ? "border-orange-500 bg-orange-50/50" : "border-slate-200 bg-white hover:border-orange-200"}`}
+                                className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${q > 0 ? "border-orange-500 bg-orange-50/50" : "border-slate-200 bg-white"}`}
                               >
-                                <div className="flex items-center gap-3">
-                                  <div
-                                    className={`w-5 h-5 flex items-center justify-center rounded-full border transition-colors ${isSelected ? "bg-theme border-theme" : "bg-white border-slate-300"}`}
-                                  >
-                                    {isSelected && (
-                                      <CheckCircle
-                                        size={14}
-                                        className="text-white"
-                                        strokeWidth={3}
-                                      />
-                                    )}
-                                  </div>
+                                <div className="flex flex-col">
                                   <span
-                                    className={`font-semibold text-[15px] ${isSelected ? "text-slate-900" : "text-slate-700"}`}
+                                    className={`font-semibold text-[15px] ${q > 0 ? "text-slate-900" : "text-slate-700"}`}
                                   >
                                     {addon.name}
                                   </span>
+                                  <span
+                                    className={`text-sm font-bold ${q > 0 ? "text-theme" : "text-slate-500"}`}
+                                  >
+                                    + R$ {addon.price.toFixed(2)}
+                                  </span>
                                 </div>
-                                <span
-                                  className={`text-sm font-bold ${isSelected ? "text-theme" : "text-slate-500"}`}
-                                >
-                                  + R$ {addon.price.toFixed(2)}
-                                </span>
+
+                                <div className="flex items-center gap-3 bg-white p-1 rounded-xl border border-slate-100 shadow-sm">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleAddOnQty(addon, -1);
+                                    }}
+                                    disabled={q === 0}
+                                    className={`p-1.5 rounded-lg transition-colors ${q === 0 ? "text-slate-300 cursor-not-allowed" : "text-slate-500 hover:text-orange-500 hover:bg-slate-50"}`}
+                                  >
+                                    <Minus size={16} strokeWidth={2.5} />
+                                  </button>
+                                  <span className={`font-bold text-[15px] w-5 text-center ${q > 0 ? "text-slate-900" : "text-slate-400"}`}>
+                                    {q}
+                                  </span>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleAddOnQty(addon, 1);
+                                    }}
+                                    className="p-1.5 text-slate-500 hover:text-theme hover:bg-slate-50 rounded-lg transition-colors"
+                                  >
+                                    <Plus size={16} strokeWidth={2.5} />
+                                  </button>
+                                </div>
                               </div>
                             );
                           })}
@@ -1343,7 +1344,7 @@ export default function Menu() {
                         R${" "}
                         {(
                           (selectedProduct.price +
-                            modalSelectedAddOns.reduce((s, a) => s + a.price, 0)) *
+                            modalSelectedAddOns.reduce((s, a) => s + a.price * a.quantity, 0)) *
                           modalQuantity
                         ).toFixed(2)}
                       </span>
@@ -1379,7 +1380,7 @@ export default function Menu() {
               <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50 no-scrollbar">
                 {cart.map((item) => {
                   const addonsTotal =
-                    item.selectedAddOns?.reduce((sum, a) => sum + a.price, 0) ||
+                    item.selectedAddOns?.reduce((sum, a) => sum + a.price * a.quantity, 0) ||
                     0;
                   const itemTotal = (item.price + addonsTotal) * item.quantity;
                   return (
@@ -1400,7 +1401,7 @@ export default function Menu() {
                                     key={addon.id}
                                     className="text-[13px] text-slate-500 flex items-center gap-1.5"
                                   >
-                                    <span className="text-orange-500 font-bold">+</span> {addon.name}
+                                    <span className="text-orange-500 font-bold">+</span> {addon.quantity}x {addon.name}
                                   </span>
                                 ))}
                               </div>

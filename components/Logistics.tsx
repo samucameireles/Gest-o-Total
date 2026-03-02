@@ -15,12 +15,14 @@ export const Logistics: React.FC<LogisticsProps> = ({ orders, drivers, onAssignD
   // V10: STRICT FILTERING - Delivery ONLY
   // Ready orders appear here.
   const readyForDelivery = orders.filter(o =>
+    o &&
     o.type === 'DELIVERY' &&
     o.status === 'READY' &&
     !o.assignedDriverId
   );
 
   const inTransit = orders.filter(o =>
+    o &&
     o.type === 'DELIVERY' &&
     (o.status === 'READY' || o.status === 'DELIVERED') && // Include delivered temporarily or just ready/assigned? Usually transit is Ready+Assigned.
     o.assignedDriverId
@@ -65,8 +67,17 @@ export const Logistics: React.FC<LogisticsProps> = ({ orders, drivers, onAssignD
 
               <div className="mb-3 text-xs text-textSecondary bg-white p-2 rounded border border-border">
                 {order.items.map((it, idx) => (
-                  <div key={idx} className="flex justify-between">
-                    <span>{it.quantity}x {it.name}</span>
+                  <div key={idx} className="flex flex-col border-b border-border/50 last:border-0 pb-1 mb-1 last:pb-0 last:mb-0">
+                    <div className="flex justify-between">
+                      <span className="font-bold">{it.quantity}x {it.name}</span>
+                    </div>
+                    {it.selectedAddOns && it.selectedAddOns.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-0.5">
+                        {it.selectedAddOns.map((addon, aIdx) => (
+                          <span key={aIdx} className="text-[9px] text-green-700 font-bold">+ {addon.quantity}x {addon.name}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

@@ -12,8 +12,9 @@ import { Motoboys } from './components/Motoboys';
 import { Settings } from './components/Settings';
 import { CRM } from './components/CRM';
 import { CashFlow } from './components/CashFlow';
-import { Order, CartItem, OrderType, PaymentMethod, Ingredient, OrderStatus, Driver, Product, NeighborhoodFee, DeliveryDetails, StoreSettings, Unit, Customer, Coupon, WasteLog, AddOn, CashRegisterSession, CashTransaction, DailyHistory } from './types';
+import { Order, CartItem, OrderType, PaymentMethod, Ingredient, OrderStatus, Driver, Product, NeighborhoodFee, DeliveryDetails, StoreSettings, Unit, Customer, Coupon, WasteLog, AddOn, CashRegisterSession, CashTransaction, DailyHistory, PrinterSettings } from './types';
 import { INITIAL_INVENTORY, RECIPES, DRIVERS, PRODUCTS, INITIAL_ADDONS } from './constants';
+import { PrinterService } from './services/PrinterService';
 
 import { useTheme } from './contexts/ThemeContext';
 import { useAuth } from './contexts/AuthContext';
@@ -52,11 +53,11 @@ export default function Dashboard() {
     const [activeTab, setActiveTab] = useState('pos');
     const [selectedUnit, setSelectedUnit] = useState<Unit | null>(null);
     const [sidebarOpen, setSidebarOpen] = useState(false);
-
     const isDark = theme === 'dark';
 
-    // --- Unit-Scoped State (Legacy LocalStorage for now) ---
+    // --- POS & Printing State ---
     const [orders, setOrders] = useState<Order[]>([]);
+    const [isPlacingOrder, setIsPlacingOrder] = useState(false);
     const [orderSequence, setOrderSequence] = useState<number>(1);
     const [inventory, setInventory] = useState<Ingredient[]>([]);
     const [products, setProducts] = useState<Product[]>([]);
@@ -68,6 +69,97 @@ export default function Dashboard() {
     const [wasteLogs, setWasteLogs] = useState<WasteLog[]>([]);
     const [addOns, setAddOns] = useState<AddOn[]>([]);
     const [categorias, setCategorias] = useState<{ id: string, label: string }[]>([]);
+    const [cashSessions, setCashSessions] = useState<CashRegisterSession[]>([]);
+    const [dailyHistory, setDailyHistory] = useState<any[]>([]);
+    const [cart, setCart] = useState<CartItem[]>([]);
+    const [orderType, setOrderType] = useState<OrderType>('DINE_IN');
+    const [deliveryForm, setDeliveryForm] = useState<DeliveryDetails>({
+        customerName: '',
+        phone: '',
+        street: '',
+        number: '',
+        complement: '',
+        neighborhood: ''
+    });
+    const [dineInName, setDineInName] = useState('');
+    const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+    const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
+    const [showCheckout, setShowCheckout] = useState(false);
+    const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CREDIT');
+    const [receivedAmountStr, setReceivedAmountStr] = useState<string>('');
+    const [printerSettings, setPrinterSettings] = useState<PrinterSettings | null>(null);
+    const printedOrdersRef = React.useRef<Set<string>>(new Set());
+
+    // --- Printer Configuration Handler ---
+    useEffect(() => {
+        if (!tenantId) return;
+        supabase.from('printer_settings').select('*').eq('tenant_id', tenantId).single().then(({ data }) => {
+            if (data) setPrinterSettings(data as PrinterSettings);
+        });
+    }, [tenantId]);
+
+
+
+    // --- Entity Management (Hoisted for Effects) ---
+    const handleFetchOrderDetails = React.useCallback(async (displayId: number): Promise<Order | null> => {
+        try {
+            const { data, error } = await supabase
+                .from('orders')
+                .select(`
+                    *,
+                    order_items (
+                        *,
+                        products (*),
+                        order_item_addons (
+                            *,
+                            addons (*)
+                        )
+                    )
+                `)
+                .eq('tenant_id', tenantId) // use tenantId from params
+                .eq('display_id', displayId)
+                .single();
+
+            if (error || !data) return null;
+
+            return {
+                id: data.id,
+                displayId: data.display_id,
+                total: data.total,
+                discount: data.discount,
+                status: data.status,
+                type: data.type,
+                isPaid: data.is_paid,
+                kitchenDismissed: data.kitchen_dismissed,
+                deliveryDetails: data.delivery_details,
+                paymentMethod: data.payment_method,
+                createdAt: new Date(data.created_at).getTime(),
+                assignedDriverId: data.driver_id,
+                customerName: data.customer_name || (data.type === 'DELIVERY' ? data.delivery_details?.customerName : ''),
+                tableName: data.table_name,
+                receivedAmount: data.received_amount,
+                changeAmount: data.change_amount,
+                deliveryFee: data.delivery_fee || 0,
+                items: (data.order_items || []).map((oi: any) => ({
+                    ...oi.products,
+                    cartId: oi.id,
+                    quantity: oi.quantity,
+                    price: oi.price_at_time,
+                    notes: oi.notes,
+                    selectedAddOns: (oi.order_item_addons || []).map((oia: any) => ({
+                        ...oia.addons,
+                        price: oia.price_at_time,
+                        quantity: oia.quantity
+                    }))
+                }))
+            };
+        } catch (err: any) {
+            console.error('Error fetching order details:', err);
+            return null;
+        }
+    }, [tenantId]);
+
+
 
     const fetchOrders = React.useCallback(async () => {
         if (!tenantId) return;
@@ -85,7 +177,8 @@ export default function Dashboard() {
                 )
             `)
             .eq('tenant_id', tenantId)
-            .neq('status', 'ARCHIVED')
+            // Fetch all orders for the dashboard reports to be accurate. 
+            // We can limit this later if the database grows too large.
             .order('created_at', { ascending: false });
 
         if (ords) {
@@ -115,7 +208,8 @@ export default function Dashboard() {
                     notes: oi.notes,
                     selectedAddOns: (oi.order_item_addons || []).map((oia: any) => ({
                         ...oia.addons,
-                        price: oia.price_at_time
+                        price: oia.price_at_time,
+                        quantity: oia.quantity
                     }))
                 }))
             }));
@@ -145,180 +239,38 @@ export default function Dashboard() {
                 },
                 (payload: any) => {
                     console.log('Realtime change detected:', payload);
-                    // Check if the change belongs to this tenant
                     const newOrder = payload.new;
                     const oldOrder = payload.old;
                     if ((newOrder && newOrder.tenant_id === tenantId) || (oldOrder && oldOrder.tenant_id === tenantId)) {
                         fetchOrders();
+
+                        // Automated Thermal Printing for NEW orders (e.g., from Online Menu)
+                        if (payload.eventType === 'INSERT' && newOrder.status === 'PREPARING') {
+                            setTimeout(async () => {
+                                if (printedOrdersRef.current.has(newOrder.id)) return;
+                                const fullOrder = await handleFetchOrderDetails(newOrder.display_id);
+                                if (fullOrder) {
+                                    PrinterService.sendToPrinter(fullOrder, printerSettings, storeSettings).catch(e => console.error('Auto-print error:', e));
+                                    printedOrdersRef.current.add(fullOrder.id);
+                                }
+                            }, 2500); // 2.5s delay to allow item inserts to complete
+                        }
                     }
                 }
             )
-            .subscribe((status) => {
-                console.log(`Realtime subscription status:`, status);
-            });
+            .subscribe();
 
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [tenantId, fetchOrders]);
+    }, [tenantId, fetchOrders, printerSettings, storeSettings]);
 
-    // --- Initialize Tenant Context ---
-    useEffect(() => {
-        const fetchTenantData = async () => {
-            if (!tenantId) return;
-            setTenant(tenantId);
-
-            try {
-                const { data, error } = await supabase.from('tenants').select('name, logo_url, logo_path, theme_color').eq('id', tenantId).single();
-                if (error) throw error;
-                if (data) {
-                    setSelectedUnit({ id: tenantId, name: data.name, logoUrl: data.logo_url || '', logoPath: data.logo_path || '', themeColor: data.theme_color || '#f97316' });
-
-                    // Fetch Products — scoped to this tenant
-                    const { data: prods } = await supabase.from('products').select('*').eq('tenant_id', tenantId).order('name');
-                    if (prods) {
-                        setProducts(prods.map(p => ({
-                            ...p,
-                            image: p.image_url,
-                            allowObservations: p.allow_observations,
-                            allowedAddOns: p.allowed_add_ons
-                        })) as any);
-                    }
-
-                    // Fetch Ingredients — scoped to this tenant
-                    const { data: ings } = await supabase.from('ingredients').select('*').eq('tenant_id', tenantId).order('name');
-                    if (ings) setInventory(ings.map(i => ({ ...i, currentStock: i.current_stock, minThreshold: i.min_threshold })) as any);
-
-                    // Fetch Coupons — scoped to this tenant
-                    const { data: coups } = await supabase.from('coupons').select('*').eq('tenant_id', tenantId);
-                    if (coups) setCoupons(coups.map(c => ({ ...c, discountPercent: c.discount_percent })) as any);
-
-                    // Fetch AddOns — scoped to this tenant
-                    const { data: ads } = await supabase.from('addons').select('*').eq('tenant_id', tenantId);
-                    if (ads) setAddOns(ads as any);
-
-                    // Fetch Categories — scoped to this tenant
-                    const { data: cats } = await supabase.from('categorias').select('*').eq('tenant_id', tenantId).order('nome');
-                    if (cats) setCategorias(cats.map(c => ({ id: c.id, label: c.nome })));
-
-                    // Fetch Customers — scoped to this tenant
-                    const { data: custs } = await supabase.from('customers').select('*').eq('tenant_id', tenantId).order('name');
-                    if (custs) setCustomers(custs.map(c => ({ ...c, lastOrder: c.last_order_at ? new Date(c.last_order_at).getTime() : undefined })) as any);
-
-                    // Fetch Drivers — scoped to this tenant
-                    const { data: drvs } = await supabase.from('drivers').select('*').eq('tenant_id', tenantId).order('name');
-                    if (drvs) setDrivers(drvs.map(d => ({ ...d, deliveriesCount: d.deliveries_count, commissionTotal: d.commission_total })) as any);
-
-                    // Fetch Fees — scoped to this tenant
-                    const { data: fey } = await supabase.from('fees').select('*').eq('tenant_id', tenantId).order('name');
-                    if (fey) setNeighborhoodFees(fey as any);
-
-                    // Fetch Waste Logs — scoped to this tenant
-                    const { data: wst } = await supabase.from('waste_logs').select('*').eq('tenant_id', tenantId).order('date', { ascending: false });
-                    if (wst) setWasteLogs(wst.map(w => ({ ...w, ingredientName: w.ingredient_name, date: w.date })) as any);
-
-                    await fetchOrders();
-
-                    // Fetch Cash Sessions — scoped to this tenant
-                    const { data: scs } = await supabase
-                        .from('caixas')
-                        .select('*, movimentacoes_caixa(*)')
-                        .eq('tenant_id', tenantId)
-                        .order('aberto_em', { ascending: false });
-
-                    if (scs) {
-                        setCashSessions(scs.map(s => ({
-                            id: s.id,
-                            openedAt: s.aberto_em ? new Date(s.aberto_em).getTime() : 0,
-                            closedAt: s.fechado_em ? new Date(s.fechado_em).getTime() : undefined,
-                            initialAmount: s.valor_inicial,
-                            finalAmount: s.valor_final,
-                            calculatedAmount: s.calculated_amount,
-                            openedBy: s.operador_id || 'Unknown',
-                            closedBy: s.operador_id || 'Unknown',
-                            closingNotes: s.observacoes,
-                            totalSales: s.total_sales,
-                            totalMoney: s.total_money,
-                            totalCardCredit: s.total_card_credit,
-                            totalCardDebit: s.total_card_debit,
-                            totalPix: s.total_pix,
-                            status: s.status === 'aberto' ? 'OPEN' : 'CLOSED',
-                            transactions: (s.movimentacoes_caixa || []).map((t: any) => ({
-                                id: t.id,
-                                type: t.tipo === 'Sangria' ? 'BLEED' : 'SUPPLY',
-                                amount: t.valor,
-                                description: t.descricao,
-                                timestamp: t.data_hora ? new Date(t.data_hora).getTime() : 0,
-                                userId: t.responsavel
-                            }))
-                        })) as any);
-                    }
-
-                    // Fetch Settings from Tenant
-                    const { data: tenantInfo } = await supabase.from('tenants').select('settings, logo_url, logo_path, theme_color').eq('id', tenantId).single();
-                    if (tenantInfo) {
-                        setStoreSettings({
-                            name: data.name,
-                            logoUrl: tenantInfo.logo_url || tenantInfo.settings?.logoUrl || '',
-                            logoPath: tenantInfo.logo_path || '',
-                            themeColor: tenantInfo.theme_color || '#f97316',
-                            menu: tenantInfo.settings?.menu,
-                            address: tenantInfo.settings?.address,
-                            googleMapsUrl: tenantInfo.settings?.googleMapsUrl,
-                            operatingHours: tenantInfo.settings?.operatingHours
-                        });
-                    }
-
-                    // Fetch Daily History — scoped to this tenant
-                    const { data: hist } = await supabase.from('daily_history').select('*').eq('tenant_id', tenantId).order('created_at', { ascending: false });
-                    if (hist) {
-                        setDailyHistory(hist.map(h => ({
-                            id: h.id,
-                            date: h.reference_date,
-                            ...h.data
-                        })));
-                    }
-
-                }
-            } catch (err) {
-                console.error('Error fetching tenant:', err);
-                setSelectedUnit({ id: tenantId, name: 'Meu Restaurante', logoUrl: '' });
-            }
-        };
-
-        fetchTenantData();
-    }, [tenantId]); // Removed setTenant because it's inside or handled by tenantId change
+    // --- Effects ---
 
 
-    // --- Unit-Scoped State (Legacy LocalStorage for now) ---
+    // (Persistence Logic below)
 
-    // --- Persistence Helpers ---
-    // (load/save functions removed as we are now fully integrated with Supabase)
 
-    // Cash Flow State
-    const [cashSessions, setCashSessions] = useState<CashRegisterSession[]>([]);
-
-    // --- Persistence ---
-    // Daily History State 
-    const [dailyHistory, setDailyHistory] = useState<any[]>([]);
-
-    // --- POS Persisted State (Uplifted) ---
-    const [cart, setCart] = useState<CartItem[]>([]);
-    const [orderType, setOrderType] = useState<OrderType>('DINE_IN');
-    const [deliveryForm, setDeliveryForm] = useState<DeliveryDetails>({
-        customerName: '',
-        phone: '',
-        street: '',
-        number: '',
-        complement: '',
-        neighborhood: ''
-    });
-    const [dineInName, setDineInName] = useState('');
-    const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-    const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
-    const [showCheckout, setShowCheckout] = useState(false);
-    const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CREDIT');
-    const [receivedAmountStr, setReceivedAmountStr] = useState<string>('');
 
     // --- POS Persistence Effects ---
     useEffect(() => {
@@ -354,6 +306,8 @@ export default function Dashboard() {
         if (savedAppliedCoupon && savedAppliedCoupon !== 'undefined') setAppliedCoupon(JSON.parse(savedAppliedCoupon));
         if (savedReceivedAmountStr) setReceivedAmountStr(savedReceivedAmountStr);
     }, [tenantId]);
+
+
 
     useEffect(() => {
         if (!tenantId) return;
@@ -421,6 +375,19 @@ export default function Dashboard() {
 
     const handleOpenCash = async (initialAmount: number) => {
         if (!selectedUnit) return;
+
+        // Double check for any open sessions in the database before proceeding
+        const { data: openCheck } = await supabase.from('caixas')
+            .select('id')
+            .eq('tenant_id', selectedUnit.id)
+            .eq('status', 'aberto')
+            .limit(1);
+
+        if (openCheck && openCheck.length > 0) {
+            alert('Já existe um caixa aberto no banco de dados. Atualize a página.');
+            return;
+        }
+
         if (activeSession) {
             alert('Já existe um caixa aberto!');
             return;
@@ -464,16 +431,24 @@ export default function Dashboard() {
 
         try {
             // 1. Prepare Daily Snapshot
-            const today = new Date().toLocaleDateString('pt-BR').split('/').reverse().join('-');
-            const paidOrders = orders.filter(o => o.isPaid && o.status !== 'CANCELLED' && o.status !== 'ARCHIVED');
+            const now = new Date();
+            const snapshotDate = new Date();
+            if (now.getHours() < 6) {
+                snapshotDate.setDate(snapshotDate.getDate() - 1);
+            }
+            const today = snapshotDate.toLocaleDateString('pt-BR').split('/').reverse().join('-');
 
-            const totalSales = paidOrders.reduce((acc, o) => acc + o.total, 0);
-            const totalOrders = paidOrders.length;
+            // V17: Inclusive metrics - count ALL business volume, not just paid cash. 
+            // This ensures Dashboard 'Total Sales' matches the actual items sold.
+            const validOrders = orders.filter(o => o.status !== 'CANCELLED');
+
+            const totalSales = validOrders.reduce((acc, o) => acc + o.total, 0);
+            const totalOrders = validOrders.length;
             const averageTicket = totalOrders > 0 ? totalSales / totalOrders : 0;
 
             const paymentMethods: PaymentMethod[] = ['CREDIT', 'DEBIT', 'CASH', 'PIX'];
             const paymentMethodsMap = paymentMethods.reduce((acc, method) => {
-                acc[method] = paidOrders.filter(o => o.paymentMethod === method).reduce((sum, o) => sum + o.total, 0);
+                acc[method] = validOrders.filter(o => o.paymentMethod === method).reduce((sum, o) => sum + o.total, 0);
                 return acc;
             }, {} as Record<PaymentMethod, number>);
 
@@ -493,15 +468,16 @@ export default function Dashboard() {
             };
 
             // 2. Save Snapshot to Supabase
-            const { error: histError } = await supabase.from('daily_history').upsert([{
-                id: today,
+            // Removing the non-existent 'data' column and fixing types for timestamptz columns
+            const { error: histError } = await supabase.from('daily_history').insert([{
                 tenant_id: selectedUnit.id,
-                reference_date: today,
-                data: historyData,
-                closed_at: historyData.closedAt,
+                reference_date: new Date(today + 'T00:00:00Z').toISOString(),
+                closed_at: new Date(historyData.closedAt!).toISOString(),
                 closed_by: historyData.closedBy,
-                orders: orders,
-                metrics: historyData.metrics
+                orders: historyData.orders,
+                metrics: historyData.metrics,
+                cash_sessions: historyData.cashSessions,
+                drivers: historyData.drivers
             }]);
 
             if (histError) throw histError;
@@ -531,10 +507,28 @@ export default function Dashboard() {
     const handleCloseCash = async (finalAmount: number, notes: string) => {
         if (!activeSession) return;
         try {
-            const sessionOrders = orders.filter(o =>
-                o.createdAt >= activeSession.openedAt &&
-                o.status !== 'CANCELLED'
-            );
+            const openedAtTime = new Date(activeSession.openedAt).getTime();
+
+            // V17: Robust Last Closure Detection - find the most recent closure BEFORE this session opened
+            const lastClosure = [...cashSessions]
+                .filter(h => h.status === 'CLOSED' && h.closedAt && h.closedAt < (openedAtTime - 1000))
+                .sort((a, b) => (b.closedAt || 0) - (a.closedAt || 0))[0];
+
+            const lastClosureTime = lastClosure && lastClosure.closedAt ? lastClosure.closedAt : 0;
+            const effectiveStart = Math.max(openedAtTime - (12 * 60 * 60 * 1000), lastClosureTime);
+            const buffer = 5 * 60 * 1000;
+
+            const combinedOrders = [...orders, ...(dailyHistory.flatMap(h => h.orders || []))];
+            const deduplicated = new Map();
+            combinedOrders.forEach(o => { if (o && o.id) deduplicated.set(o.id, o); });
+
+            const sessionOrders = Array.from(deduplicated.values()).filter((o: any) => {
+                const orderTime = new Date(o.createdAt).getTime();
+                return orderTime >= effectiveStart &&
+                    orderTime <= (new Date().getTime() + buffer) &&
+                    o.status !== 'CANCELLED';
+            });
+
             const totalSales = sessionOrders.reduce((sum, o) => sum + o.total, 0);
             const salesByMethod = sessionOrders.reduce((acc, o) => {
                 acc[o.paymentMethod] = (acc[o.paymentMethod] || 0) + o.total;
@@ -607,19 +601,20 @@ export default function Dashboard() {
     };
 
     const handlePlaceOrder = async (items: CartItem[], type: OrderType, paymentMethod: PaymentMethod, deliveryDetails?: DeliveryDetails, dineInName?: string, tableName?: string, sendToKitchenOnly?: boolean, receivedAmount?: number, changeAmount?: number, discount: number = 0, deliveryFee: number = 0) => {
-        if (!selectedUnit) return;
+        if (!selectedUnit || isPlacingOrder) return;
         if (!activeSession) {
             alert('O caixa está FECHADO. Abra o caixa antes de realizar vendas.');
             return;
         }
 
+        setIsPlacingOrder(true);
         try {
             const { data: lastOrder } = await supabase.from('orders').select('display_id').order('display_id', { ascending: false }).limit(1).maybeSingle();
             const currentId = (lastOrder?.display_id || 0) + 1;
             setOrderSequence(currentId + 1);
 
             const subtotal = items.reduce((acc, item) => {
-                const addOnsTotal = item.selectedAddOns?.reduce((sum, addon) => sum + addon.price, 0) || 0;
+                const addOnsTotal = item.selectedAddOns?.reduce((sum, addon) => sum + (addon.price * addon.quantity), 0) || 0;
                 return acc + ((item.price + addOnsTotal) * item.quantity);
             }, 0);
 
@@ -645,30 +640,46 @@ export default function Dashboard() {
 
             if (orderError) throw orderError;
 
-            // 2. Insert Items
-            for (const item of items) {
-                const { data: itemData, error: itemError } = await supabase.from('order_items').insert([{
-                    tenant_id: selectedUnit.id,
-                    order_id: orderData.id,
-                    product_id: item.id,
-                    quantity: item.quantity,
-                    price_at_time: item.price,
-                    notes: item.notes
-                }]).select().single();
+            // 2. Insert Items (Batch)
+            const itemsToInsert = items.map(item => ({
+                tenant_id: selectedUnit.id,
+                order_id: orderData.id,
+                product_id: item.id,
+                quantity: item.quantity,
+                price_at_time: item.price,
+                notes: item.notes
+            }));
 
-                if (itemError) throw itemError;
+            const { data: insertedItems, error: itemsError } = await supabase
+                .from('order_items')
+                .insert(itemsToInsert)
+                .select();
 
+            if (itemsError) throw itemsError;
+
+            // 3. Insert AddOns (Batch)
+            const addonsToInsert: any[] = [];
+            items.forEach((item, index) => {
                 if (item.selectedAddOns && item.selectedAddOns.length > 0) {
-                    await supabase.from('order_item_addons').insert(item.selectedAddOns.map(a => ({
-                        tenant_id: selectedUnit.id,
-                        order_item_id: itemData.id,
-                        addon_id: a.id,
-                        price_at_time: a.price
-                    })));
+                    const orderItemId = insertedItems[index].id;
+                    item.selectedAddOns.forEach(addon => {
+                        addonsToInsert.push({
+                            tenant_id: selectedUnit.id,
+                            order_item_id: orderItemId,
+                            addon_id: addon.id,
+                            price_at_time: addon.price,
+                            quantity: addon.quantity
+                        });
+                    });
                 }
+            });
+
+            if (addonsToInsert.length > 0) {
+                const { error: addonsError } = await supabase.from('order_item_addons').insert(addonsToInsert);
+                if (addonsError) throw addonsError;
             }
 
-            // 3. Update State & Inventory
+            // 4. Update State & Inventory
             const newOrder: Order = {
                 id: orderData.id,
                 displayId: currentId,
@@ -689,19 +700,29 @@ export default function Dashboard() {
                 changeAmount
             };
 
-            setOrders(prev => [newOrder, ...prev]);
+            // Deduplication & Upsert: Real-time might have already added this order (potentially incomplete)
+            // We overwrite it with our full local data (including all items and add-ons)
+            setOrders(prev => {
+                const filtered = prev.filter(o => o.id !== newOrder.id);
+                return [newOrder, ...filtered];
+            });
 
-            // Update Inventory logic (Simplified Supabase calls)
-            for (const item of items) {
+            // Update Inventory logic (Optimized Stock Updates)
+            const stockUpdates: Record<string, number> = {};
+            items.forEach(item => {
                 let productRecipe = item.recipe || RECIPES[item.id];
                 if (productRecipe) {
-                    for (const recipeItem of productRecipe) {
-                        const ing = inventory.find(i => i.id === recipeItem.ingredientId);
-                        if (ing) {
-                            const newStock = ing.currentStock - (recipeItem.amount * item.quantity);
-                            await handleUpdateStock(ing.id, newStock);
-                        }
-                    }
+                    productRecipe.forEach(recipeItem => {
+                        const currentVal = stockUpdates[recipeItem.ingredientId] || 0;
+                        stockUpdates[recipeItem.ingredientId] = currentVal + (recipeItem.amount * item.quantity);
+                    });
+                }
+            });
+
+            for (const [ingId, amount] of Object.entries(stockUpdates)) {
+                const ing = inventory.find(i => i.id === ingId);
+                if (ing) {
+                    await handleUpdateStock(ingId, ing.currentStock - amount);
                 }
             }
 
@@ -715,9 +736,15 @@ export default function Dashboard() {
             setShowCheckout(false);
             setPaymentMethod('PIX');
             setReceivedAmountStr('');
+
+            // 5. Automatic Dispatch to Printer (Immediate for POS operator)
+            if (newOrder.id) printedOrdersRef.current.add(newOrder.id);
+            PrinterService.sendToPrinter(newOrder, printerSettings, storeSettings).catch(e => console.error('Print failure:', e));
         } catch (err: any) {
             console.error('Error placing order:', err);
             alert('Erro ao realizar pedido: ' + err.message);
+        } finally {
+            setIsPlacingOrder(false);
         }
     };
 
@@ -765,16 +792,24 @@ export default function Dashboard() {
     };
 
     const handleUpdateCategory = async (id: string, newName: string) => {
+        if (!selectedUnit) return;
         try {
-            const { error } = await supabase.from('categorias').update({ nome: newName }).eq('id', id);
+            const { error } = await supabase.from('categorias')
+                .update({ nome: newName })
+                .eq('id', id)
+                .eq('tenant_id', selectedUnit.id);
             if (error) throw error;
             setCategorias(prev => prev.map(c => c.id === id ? { ...c, label: newName } : c));
         } catch (err: any) { alert('Erro ao atualizar categoria: ' + err.message); }
     };
 
     const handleDeleteCategory = async (id: string) => {
+        if (!selectedUnit) return;
         try {
-            const { error } = await supabase.from('categorias').delete().eq('id', id);
+            const { error } = await supabase.from('categorias')
+                .delete()
+                .eq('id', id)
+                .eq('tenant_id', selectedUnit.id);
             if (error) throw error;
             setCategorias(prev => prev.filter(c => c.id !== id));
         } catch (err: any) { alert('Erro ao excluir categoria: ' + err.message); }
@@ -805,63 +840,8 @@ export default function Dashboard() {
         }
     };
 
-    // --- Entity Management ---
-    const handleFetchOrderDetails = async (displayId: number): Promise<Order | null> => {
-        try {
-            const { data, error } = await supabase
-                .from('orders')
-                .select(`
-                    *,
-                    order_items (
-                        *,
-                        products (*),
-                        order_item_addons (
-                            *,
-                            addons (*)
-                        )
-                    )
-                `)
-                .eq('tenant_id', selectedUnit?.id)
-                .eq('display_id', displayId)
-                .single();
+    // --- Entity Management (Moved to top) ---
 
-            if (error || !data) return null;
-
-            return {
-                id: data.id,
-                displayId: data.display_id,
-                total: data.total,
-                discount: data.discount,
-                status: data.status,
-                type: data.type,
-                isPaid: data.is_paid,
-                kitchenDismissed: data.kitchen_dismissed,
-                deliveryDetails: data.delivery_details,
-                paymentMethod: data.payment_method,
-                createdAt: new Date(data.created_at).getTime(),
-                assignedDriverId: data.driver_id,
-                customerName: data.customer_name || (data.type === 'DELIVERY' ? data.delivery_details?.customerName : ''),
-                tableName: data.table_name,
-                receivedAmount: data.received_amount,
-                changeAmount: data.change_amount,
-                deliveryFee: data.delivery_fee || 0,
-                items: (data.order_items || []).map((oi: any) => ({
-                    ...oi.products,
-                    cartId: oi.id,
-                    quantity: oi.quantity,
-                    price: oi.price_at_time,
-                    notes: oi.notes,
-                    selectedAddOns: (oi.order_item_addons || []).map((oia: any) => ({
-                        ...oia.addons,
-                        price: oia.price_at_time
-                    }))
-                }))
-            };
-        } catch (err) {
-            console.error('Error fetching order by displayId:', err);
-            return null;
-        }
-    };
 
     const handleAssignDriver = async (orderId: string, driverId: string) => {
         try {
@@ -1365,6 +1345,7 @@ export default function Dashboard() {
                     setPaymentMethod={setPaymentMethod}
                     receivedAmountStr={receivedAmountStr}
                     setReceivedAmountStr={setReceivedAmountStr}
+                    isPlacingOrder={isPlacingOrder}
                 />;
             case 'kitchen':
                 return <Kitchen orders={orders} onUpdateStatus={handleUpdateStatus} onKitchenDismiss={handleKitchenDismiss} />;
@@ -1381,11 +1362,141 @@ export default function Dashboard() {
             case 'cashflow':
                 return <CashFlow currentSession={activeSession} history={cashSessions} onOpenCash={handleOpenCash} onCloseCash={handleCloseCash} onAddTransaction={handleAddTransaction} orders={orders} onEndDay={handleCloseDay} dailyHistory={dailyHistory} />;
             case 'settings':
-                return <Settings settings={storeSettings} onUpdateSettings={handleUpdateSettings} coupons={coupons} onAddCoupon={handleAddCoupon} onRemoveCoupon={handleRemoveCoupon} cashiers={cashiers} onAddCashier={handleAddCashier} onRemoveCashier={handleRemoveCashier} />;
+                return <Settings settings={storeSettings} onUpdateSettings={handleUpdateSettings} coupons={coupons} onAddCoupon={handleAddCoupon} onRemoveCoupon={handleRemoveCoupon} cashiers={cashiers} onAddCashier={handleAddCashier} onRemoveCashier={handleRemoveCashier} onUpdatePrinterSettings={setPrinterSettings} printerSettings={printerSettings} />;
             default:
                 return null;
         }
     };
+
+    // --- Initialize Tenant Context & POS Persistence ---
+    useEffect(() => {
+        const fetchTenantData = async () => {
+            if (!tenantId) return;
+            setTenant(tenantId);
+
+            try {
+                const { data, error } = await supabase.from('tenants').select('name, logo_url, logo_path, theme_color').eq('id', tenantId).single();
+                if (error) throw error;
+                if (data) {
+                    setSelectedUnit({ id: tenantId, name: data.name, logoUrl: data.logo_url || '', logoPath: data.logo_path || '', themeColor: data.theme_color || '#f97316' });
+
+                    // Fetch Products — scoped to this tenant
+                    const { data: prods } = await supabase.from('products').select('*').eq('tenant_id', tenantId).order('name');
+                    if (prods) {
+                        setProducts(prods.map(p => ({
+                            ...p,
+                            image: p.image_url,
+                            allowObservations: p.allow_observations,
+                            allowedAddOns: p.allowed_add_ons
+                        })) as any);
+                    }
+
+                    // Fetch Ingredients — scoped to this tenant
+                    const { data: ings } = await supabase.from('ingredients').select('*').eq('tenant_id', tenantId).order('name');
+                    if (ings) setInventory(ings.map(i => ({ ...i, currentStock: i.current_stock, minThreshold: i.min_threshold })) as any);
+
+                    // Fetch Coupons — scoped to this tenant
+                    const { data: coups } = await supabase.from('coupons').select('*').eq('tenant_id', tenantId);
+                    if (coups) setCoupons(coups.map(c => ({ ...c, discountPercent: c.discount_percent })) as any);
+
+                    // Fetch AddOns — scoped to this tenant
+                    const { data: ads } = await supabase.from('addons').select('*').eq('tenant_id', tenantId);
+                    if (ads) setAddOns(ads as any);
+
+                    // Fetch Categories — scoped to this tenant
+                    const { data: cats } = await supabase.from('categorias').select('*').eq('tenant_id', tenantId).order('nome');
+                    if (cats) setCategorias(cats.map(c => ({ id: c.id, label: c.nome })));
+
+                    // Fetch Customers — scoped to this tenant
+                    const { data: custs } = await supabase.from('customers').select('*').eq('tenant_id', tenantId).order('name');
+                    if (custs) setCustomers(custs.map(c => ({ ...c, lastOrder: c.last_order_at ? new Date(c.last_order_at).getTime() : undefined })) as any);
+
+                    // Fetch Drivers — scoped to this tenant
+                    const { data: drvs } = await supabase.from('drivers').select('*').eq('tenant_id', tenantId).order('name');
+                    if (drvs) setDrivers(drvs.map(d => ({ ...d, deliveriesCount: d.deliveries_count, commissionTotal: d.commission_total })) as any);
+
+                    // Fetch Fees — scoped to this tenant
+                    const { data: fey } = await supabase.from('fees').select('*').eq('tenant_id', tenantId).order('name');
+                    if (fey) setNeighborhoodFees(fey as any);
+
+                    // Fetch Waste Logs — scoped to this tenant
+                    const { data: wst } = await supabase.from('waste_logs').select('*').eq('tenant_id', tenantId).order('date', { ascending: false });
+                    if (wst) setWasteLogs(wst.map(w => ({ ...w, ingredientName: w.ingredient_name, date: w.date })) as any);
+
+                    await fetchOrders();
+
+                    // Fetch Cash Sessions — scoped to this tenant
+                    const { data: scs } = await supabase
+                        .from('caixas')
+                        .select('*, movimentacoes_caixa(*)')
+                        .eq('tenant_id', tenantId)
+                        .order('aberto_em', { ascending: false });
+
+                    if (scs) {
+                        setCashSessions(scs.map(s => ({
+                            id: s.id,
+                            openedAt: s.aberto_em ? new Date(s.aberto_em).getTime() : 0,
+                            closedAt: s.fechado_em ? new Date(s.fechado_em).getTime() : undefined,
+                            initialAmount: s.valor_inicial,
+                            finalAmount: s.valor_final,
+                            calculatedAmount: s.calculated_amount,
+                            openedBy: s.operador_id || 'Unknown',
+                            closedBy: s.operador_id || 'Unknown',
+                            closingNotes: s.observacoes,
+                            totalSales: s.total_sales,
+                            totalMoney: s.total_money,
+                            totalCardCredit: s.total_card_credit,
+                            totalCardDebit: s.total_card_debit,
+                            totalPix: s.total_pix,
+                            status: s.status === 'aberto' ? 'OPEN' : 'CLOSED',
+                            transactions: (s.movimentacoes_caixa || []).map((t: any) => ({
+                                id: t.id,
+                                type: t.tipo === 'Sangria' ? 'BLEED' : 'SUPPLY',
+                                amount: t.valor,
+                                description: t.descricao,
+                                timestamp: t.data_hora ? new Date(t.data_hora).getTime() : 0,
+                                userId: t.responsavel
+                            }))
+                        })) as any);
+                    }
+
+                    // Fetch Settings from Tenant
+                    const { data: tenantInfo } = await supabase.from('tenants').select('settings, logo_url, logo_path, theme_color').eq('id', tenantId).single();
+                    if (tenantInfo) {
+                        setStoreSettings({
+                            name: data.name,
+                            logoUrl: tenantInfo.logo_url || tenantInfo.settings?.logoUrl || '',
+                            logoPath: tenantInfo.logo_path || '',
+                            themeColor: tenantInfo.theme_color || '#f97316',
+                            menu: tenantInfo.settings?.menu,
+                            address: tenantInfo.settings?.address,
+                            googleMapsUrl: tenantInfo.settings?.googleMapsUrl,
+                            operatingHours: tenantInfo.settings?.operatingHours
+                        });
+                    }
+
+                    // Fetch Daily History — scoped to this tenant
+                    const { data: hist } = await supabase.from('daily_history').select('*').eq('tenant_id', tenantId).order('created_at', { ascending: false });
+                    if (hist) {
+                        setDailyHistory(hist.map(h => ({
+                            id: h.id,
+                            date: h.reference_date,
+                            orders: h.orders || [],
+                            metrics: h.metrics,
+                            cashSessions: h.cash_sessions || [],
+                            drivers: h.drivers || []
+                        })));
+                    }
+
+                }
+            } catch (err) {
+                console.error('Error fetching tenant:', err);
+                setSelectedUnit({ id: tenantId, name: 'Meu Restaurante', logoUrl: '' });
+            }
+        };
+
+        fetchTenantData();
+    }, [tenantId]); // Removed setTenant because it's inside or handled by tenantId change
 
     if (!selectedUnit) {
         return <div className={`h-screen w-screen flex items-center justify-center transition-colors duration-500 ${isDark ? 'bg-[#050507]' : 'bg-slate-50'}`}><Loader2 className="animate-spin text-blue-600" size={32} /></div>;

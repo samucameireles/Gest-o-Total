@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, Minus, Trash2, CreditCard, Banknote, Smartphone, CheckCircle, ShoppingCart, X, ShoppingBag, MapPin, Store, ChefHat, UserSearch, UserPlus, Tag } from 'lucide-react';
-import { Product, CartItem, Category, PaymentMethod, OrderType, Ingredient, DeliveryDetails, Customer, Order, Coupon, AddOn, NeighborhoodFee } from '../types';
+import { Search, Plus, Minus, Trash2, CreditCard, Banknote, Smartphone, CheckCircle, ShoppingCart, X, ShoppingBag, MapPin, Store, ChefHat, UserSearch, UserPlus, Tag, Loader2 } from 'lucide-react';
+import { Product, CartItem, Category, PaymentMethod, OrderType, Ingredient, DeliveryDetails, Customer, Order, Coupon, AddOn, NeighborhoodFee, SelectedAddOn } from '../types';
 import { RECIPES } from '../constants';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../contexts/ThemeContext';
@@ -41,12 +41,13 @@ interface POSProps {
   setShowCheckout: React.Dispatch<React.SetStateAction<boolean>>;
   receivedAmountStr: string;
   setReceivedAmountStr: React.Dispatch<React.SetStateAction<string>>;
+  isPlacingOrder?: boolean;
 }
 
 export const POS: React.FC<POSProps> = ({
   products, onPlaceOrder, onPayOrder, inventory, customers, onAddCustomer, activeOrders, coupons, addOns, categorias, onAddCategory, onUpdateCategory, onDeleteCategory, onUpdateFee, onRemoveFee, neighborhoodFees,
   cart, setCart, orderType, setOrderType, paymentMethod, setPaymentMethod, deliveryForm, setDeliveryForm, dineInName, setDineInName, selectedCustomer, setSelectedCustomer, appliedCoupon, setAppliedCoupon, showCheckout, setShowCheckout,
-  receivedAmountStr, setReceivedAmountStr
+  receivedAmountStr, setReceivedAmountStr, isPlacingOrder
 }) => {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
@@ -58,7 +59,7 @@ export const POS: React.FC<POSProps> = ({
   const [modalQuantity, setModalQuantity] = useState(1);
   const [modalNotes, setModalNotes] = useState('');
   // V12: Selected AddOns
-  const [modalSelectedAddOns, setModalSelectedAddOns] = useState<AddOn[]>([]);
+  const [modalSelectedAddOns, setModalSelectedAddOns] = useState<SelectedAddOn[]>([]);
 
   // Open Tab
   const [selectedTabToPay, setSelectedTabToPay] = useState<Order | null>(null);
@@ -135,11 +136,18 @@ export const POS: React.FC<POSProps> = ({
     setModalSelectedAddOns([]); // Reset AddOns
   };
 
-  const toggleAddOn = (addon: AddOn) => {
-    setModalSelectedAddOns(prev => {
-      const exists = prev.find(a => a.id === addon.id);
-      if (exists) return prev.filter(a => a.id !== addon.id);
-      return [...prev, addon];
+  const handleAddOnQty = (addon: AddOn, delta: number) => {
+    setModalSelectedAddOns((prev) => {
+      const existing = prev.find((a) => a.id === addon.id);
+      if (existing) {
+        const newQty = existing.quantity + delta;
+        if (newQty <= 0) return prev.filter((a) => a.id !== addon.id);
+        return prev.map((a) =>
+          a.id === addon.id ? { ...a, quantity: newQty } : a,
+        );
+      }
+      if (delta > 0) return [...prev, { ...addon, quantity: 1 }];
+      return prev;
     });
   };
 
@@ -147,12 +155,12 @@ export const POS: React.FC<POSProps> = ({
     if (!selectedProduct) return;
     setCart(prev => {
       // Unique Item ID logic based on Product + Notes + AddOns
-      const addonsKey = modalSelectedAddOns.map(a => a.id).sort().join(',');
+      const addonsKey = modalSelectedAddOns.map(a => `${a.id}:${a.quantity}`).sort().join(',');
 
       const existing = prev.find(item =>
         item.id === selectedProduct.id &&
         item.notes === modalNotes &&
-        (item.selectedAddOns?.map(a => a.id).sort().join(',') === addonsKey)
+        (item.selectedAddOns?.map(a => `${a.id}:${a.quantity}`).sort().join(',') === addonsKey)
       );
 
       if (existing) {
@@ -163,7 +171,7 @@ export const POS: React.FC<POSProps> = ({
         cartId: Math.random().toString(36).substr(2, 9),
         quantity: modalQuantity,
         notes: modalNotes,
-        selectedAddOns: modalSelectedAddOns
+        selectedAddOns: [...modalSelectedAddOns]
       }];
     });
     setSelectedProduct(null);
@@ -178,7 +186,7 @@ export const POS: React.FC<POSProps> = ({
   };
 
   const cartSubtotal = cart.reduce((acc, item) => {
-    const addonsTotal = item.selectedAddOns?.reduce((sum, a) => sum + a.price, 0) || 0;
+    const addonsTotal = item.selectedAddOns?.reduce((sum, a) => sum + (a.price * a.quantity), 0) || 0;
     return acc + ((item.price + addonsTotal) * item.quantity);
   }, 0);
 
@@ -322,7 +330,7 @@ export const POS: React.FC<POSProps> = ({
   };
 
   // V12: Calculate Modal Total dynamically
-  const modalTotal = selectedProduct ? (selectedProduct.price + modalSelectedAddOns.reduce((sum, a) => sum + a.price, 0)) * modalQuantity : 0;
+  const modalTotal = selectedProduct ? (selectedProduct.price + modalSelectedAddOns.reduce((sum, a) => sum + (a.price * a.quantity), 0)) * modalQuantity : 0;
 
   return (
     <div className="flex flex-col lg:flex-row h-full gap-4 lg:gap-6 relative">
@@ -439,7 +447,7 @@ export const POS: React.FC<POSProps> = ({
                       {item.selectedAddOns && item.selectedAddOns.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-1">
                           {item.selectedAddOns.map((addon, idx) => (
-                            <span key={idx} className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold">+ {addon.name}</span>
+                            <span key={idx} className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold">+ {addon.quantity}x {addon.name}</span>
                           ))}
                         </div>
                       )}
@@ -609,18 +617,26 @@ export const POS: React.FC<POSProps> = ({
                 {!selectedTabToPay ? (
                   orderType === 'DINE_IN' ? (
                     <div className="flex gap-2">
-                      <button onClick={() => setShowCheckout(false)} className="flex-1 bg-white border border-border font-bold rounded-xl text-sm">Voltar</button>
-                      <button onClick={() => processOrder(true)} className="flex-[3] bg-highlight hover:bg-yellow-600 text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2"><ChefHat size={18} /> Enviar p/ Cozinha</button>
+                      <button onClick={() => setShowCheckout(false)} className="flex-1 bg-white border border-border font-bold rounded-xl text-sm" disabled={isPlacingOrder}>Voltar</button>
+                      <button
+                        onClick={() => processOrder(true)}
+                        disabled={isPlacingOrder}
+                        className="flex-[3] bg-highlight hover:bg-yellow-600 text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {isPlacingOrder ? <Loader2 className="animate-spin" size={18} /> : <ChefHat size={18} />}
+                        {isPlacingOrder ? 'PROCESSANDO...' : 'Enviar p/ Cozinha'}
+                      </button>
                     </div>
                   ) : (
                     <div className="flex gap-2">
-                      <button onClick={() => setShowCheckout(false)} className="flex-1 bg-white border border-border font-bold rounded-xl text-sm">Voltar</button>
+                      <button onClick={() => setShowCheckout(false)} className="flex-1 bg-white border border-border font-bold rounded-xl text-sm" disabled={isPlacingOrder}>Voltar</button>
                       <button
                         onClick={() => processOrder(false)}
-                        disabled={paymentMethod === 'CASH' && (parseFloat(receivedAmountStr) || 0) < finalTotal}
+                        disabled={isPlacingOrder || (paymentMethod === 'CASH' && (parseFloat(receivedAmountStr) || 0) < finalTotal)}
                         className="flex-[3] bg-success hover:bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        <CheckCircle size={18} /> Finalizar Pedido
+                        {isPlacingOrder ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle size={18} />}
+                        {isPlacingOrder ? 'PROCESSANDO...' : 'Finalizar Pedido'}
                       </button>
                     </div>
                   )
@@ -668,15 +684,20 @@ export const POS: React.FC<POSProps> = ({
                         return selectedProduct.allowedAddOns?.includes(addon.id); // Fallback
                       })
                       .map(addon => {
-                        const isSelected = modalSelectedAddOns.some(a => a.id === addon.id);
+                        const selectedAddon = modalSelectedAddOns.find(a => a.id === addon.id);
+                        const q = selectedAddon ? selectedAddon.quantity : 0;
                         return (
-                          <button
-                            key={addon.id}
-                            onClick={() => toggleAddOn(addon)}
-                            className={`text-xs px-3 py-1.5 rounded-full border transition-all ${isSelected ? 'bg-accent text-white border-accent font-bold' : 'bg-white text-textPrimary border-border'}`}
-                          >
-                            {addon.name} (+ R$ {addon.price.toFixed(2)})
-                          </button>
+                          <div key={addon.id} className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${q > 0 ? 'bg-accent/5 border-accent' : 'bg-white border-border'}`}>
+                            <div className="flex flex-col">
+                              <span className={`text-xs font-bold ${q > 0 ? 'text-accent' : 'text-textPrimary'}`}>{addon.name}</span>
+                              <span className="text-[10px] text-textSecondary">+ R$ {addon.price.toFixed(2)}</span>
+                            </div>
+                            <div className="flex items-center gap-2 bg-white rounded-lg p-1 border border-border">
+                              <button onClick={() => handleAddOnQty(addon, -1)} className="p-1 hover:bg-gray-50 text-textSecondary"><Minus size={12} /></button>
+                              <span className="text-xs font-bold w-4 text-center">{q}</span>
+                              <button onClick={() => handleAddOnQty(addon, 1)} className="p-1 hover:bg-gray-50 text-textSecondary"><Plus size={12} /></button>
+                            </div>
+                          </div>
                         );
                       })}
                   </div>
