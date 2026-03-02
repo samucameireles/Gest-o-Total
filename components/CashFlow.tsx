@@ -247,12 +247,12 @@ export const CashFlow: React.FC<CashFlowProps> = ({
     // Fallback to calculation for CURRENT session or if saved totals are missing.
     const isClosed = activeSession?.status === 'CLOSED';
 
-    const totalSupply = (isClosed && activeSession?.totalSupplies !== undefined)
-        ? activeSession.totalSupplies
+    const totalSupply = (isClosed && activeSession?.totalSupply !== undefined)
+        ? activeSession.totalSupply
         : movimentacoes.filter(t => t.tipo === 'Suprimento').reduce((sum, t) => sum + t.valor, 0);
 
-    const totalBleed = (isClosed && activeSession?.totalBleeds !== undefined)
-        ? activeSession.totalBleeds
+    const totalBleed = (isClosed && activeSession?.totalBleed !== undefined)
+        ? activeSession.totalBleed
         : movimentacoes.filter(t => t.tipo === 'Sangria').reduce((sum, t) => sum + t.valor, 0);
 
     const totalSales = (isClosed && activeSession?.totalSales !== undefined)
@@ -444,8 +444,8 @@ export const CashFlow: React.FC<CashFlowProps> = ({
                                         key={session.id}
                                         onClick={() => setSelectedSessionId(session.id)}
                                         className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${activeSession?.id === session.id
-                                                ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
-                                                : isDark ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-800 hover:bg-white'
+                                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
+                                            : isDark ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-800 hover:bg-white'
                                             }`}
                                     >
                                         Turno #{daySessions.length - idx} ({new Date(session.openedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })})

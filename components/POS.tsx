@@ -7,7 +7,7 @@ import { useTheme } from '../contexts/ThemeContext';
 
 interface POSProps {
   products: Product[];
-  onPlaceOrder: (items: CartItem[], type: OrderType, payment: PaymentMethod, deliveryDetails?: DeliveryDetails, dineInName?: string, tableName?: string, sendToKitchenOnly?: boolean, receivedAmount?: number, changeAmount?: number, discount?: number, deliveryFee?: number) => void;
+  onPlaceOrder: (items: CartItem[], type: OrderType, payment: PaymentMethod, deliveryDetails?: DeliveryDetails, dineInName?: string, tableName?: string, sendToKitchenOnly?: boolean, receivedAmount?: number, changeAmount?: number, discount?: number, deliveryFee?: number, editingOrderId?: string | null) => void;
   onPayOrder: (orderId: string, payment: PaymentMethod, discount: number, receivedAmount?: number, changeAmount?: number) => void;
   inventory: Ingredient[];
   customers: Customer[];
@@ -42,12 +42,14 @@ interface POSProps {
   receivedAmountStr: string;
   setReceivedAmountStr: React.Dispatch<React.SetStateAction<string>>;
   isPlacingOrder?: boolean;
+  editingOrderId: string | null;
+  setEditingOrderId: React.Dispatch<React.SetStateAction<string | null>>;
 }
 
 export const POS: React.FC<POSProps> = ({
   products, onPlaceOrder, onPayOrder, inventory, customers, onAddCustomer, activeOrders, coupons, addOns, categorias, onAddCategory, onUpdateCategory, onDeleteCategory, onUpdateFee, onRemoveFee, neighborhoodFees,
   cart, setCart, orderType, setOrderType, paymentMethod, setPaymentMethod, deliveryForm, setDeliveryForm, dineInName, setDineInName, selectedCustomer, setSelectedCustomer, appliedCoupon, setAppliedCoupon, showCheckout, setShowCheckout,
-  receivedAmountStr, setReceivedAmountStr, isPlacingOrder
+  receivedAmountStr, setReceivedAmountStr, isPlacingOrder, editingOrderId, setEditingOrderId
 }) => {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
@@ -104,6 +106,41 @@ export const POS: React.FC<POSProps> = ({
     }
   };
 
+  const handleEditOrder = (order: Order) => {
+    setEditingOrderId(order.id);
+    setOrderType(order.type);
+
+    // Restore cart items
+    const restoredCart: CartItem[] = order.items.map(item => ({
+      ...item,
+      cartId: item.cartId || Math.random().toString(36).substr(2, 9),
+    })) as CartItem[];
+    setCart(restoredCart);
+
+    if (order.type === 'DELIVERY' && order.deliveryDetails) {
+      setDeliveryForm({
+        ...order.deliveryDetails
+      });
+      // Try to match customer
+      const customerMatch = customers.find(c => c.phone === order.deliveryDetails?.phone);
+      if (customerMatch) setSelectedCustomer(customerMatch);
+    } else {
+      setDineInName(order.tableName || order.customerName || '');
+    }
+
+    setShowCheckout(false);
+  };
+
+  const cancelEditOrder = () => {
+    if (window.confirm("Deseja cancelar a edição? O carrinho será limpo.")) {
+      setEditingOrderId(null);
+      setCart([]);
+      setDineInName('');
+      setDeliveryForm({ customerName: '', phone: '', street: '', number: '', complement: '', neighborhood: '' });
+      setSelectedCustomer(null);
+    }
+  };
+
   // Logic to identify missing ingredients
   const checkStockStatus = (product: Product): { available: boolean, missingItem?: string } => {
     let recipe = product.recipe;
@@ -153,6 +190,65 @@ export const POS: React.FC<POSProps> = ({
 
   const confirmAddToCart = () => {
     if (!selectedProduct) return;
+
+    // --- V19: Trava Rígida de Estoque (Duplo Multiplicador da Demanda) ---
+    // 1. Acumulador da Demanda
+    const demanda: Record<string, number> = {};
+
+    // 2. Somar o que já está no Carrinho
+    cart.forEach(item => {
+      const itemQty = Number(item.quantity) || 0;
+
+      // Receita Base (Carrinho)
+      let productRecipe = item.recipe || RECIPES[item.id];
+      if (productRecipe) {
+        productRecipe.forEach(r => {
+          demanda[r.ingredientId] = (demanda[r.ingredientId] || 0) + (Number(r.amount) * itemQty);
+        });
+      }
+
+      // Adicionais (Carrinho)
+      if (item.selectedAddOns && Array.isArray(item.selectedAddOns)) {
+        item.selectedAddOns.forEach(addon => {
+          const activeAddonDef = addOns.find(a => a.id === addon.id);
+          if (activeAddonDef && activeAddonDef.ingredientId) {
+            demanda[activeAddonDef.ingredientId] = (demanda[activeAddonDef.ingredientId] || 0) + (Number(addon.quantity) * itemQty);
+          }
+        });
+      }
+    });
+
+    // 3. Somar o que está Sendo Adicionado Agora (Modal Atual)
+    const modalQty = Number(modalQuantity) || 0;
+
+    // Receita Base (Modal)
+    let modalRecipe = selectedProduct.recipe || RECIPES[selectedProduct.id];
+    if (modalRecipe) {
+      modalRecipe.forEach(r => {
+        demanda[r.ingredientId] = (demanda[r.ingredientId] || 0) + (Number(r.amount) * modalQty);
+      });
+    }
+
+    // Adicionais (Modal)
+    if (modalSelectedAddOns && Array.isArray(modalSelectedAddOns)) {
+      modalSelectedAddOns.forEach(addon => {
+        const activeAddonDef = addOns.find(a => a.id === addon.id);
+        if (activeAddonDef && activeAddonDef.ingredientId) {
+          demanda[activeAddonDef.ingredientId] = (demanda[activeAddonDef.ingredientId] || 0) + (Number(addon.quantity) * modalQty);
+        }
+      });
+    }
+
+    // 4. Validação contra o Estoque Físico
+    for (const [ingId, qtyNeeded] of Object.entries(demanda)) {
+      const ing = inventory.find(i => i.id === ingId);
+      if (ing && ing.currentStock < qtyNeeded) {
+        alert(`Estoque insuficiente de: ${ing.name}!\nNecessário: ${qtyNeeded} ${ing.unit}.\nDisponível: ${ing.currentStock} ${ing.unit}.\nPor favor, reabasteça o estoque ou reduza o pedido.`);
+        return; // Interrompe: não adiciona ao carrinho
+      }
+    }
+    // -------------------------------------------------------------------
+
     setCart(prev => {
       // Unique Item ID logic based on Product + Notes + AddOns
       const addonsKey = modalSelectedAddOns.map(a => `${a.id}:${a.quantity}`).sort().join(',');
@@ -318,7 +414,8 @@ export const POS: React.FC<POSProps> = ({
       paymentMethod === 'CASH' && !sendToKitchenOnly ? parsedReceived : undefined,
       paymentMethod === 'CASH' && !sendToKitchenOnly ? changeAmount : undefined,
       discountAmount,
-      deliveryFee
+      deliveryFee,
+      editingOrderId
     );
 
     // After sending to kitchen, go back to open tabs view
@@ -406,7 +503,13 @@ export const POS: React.FC<POSProps> = ({
 
       {/* ── DESKTOP SIDEBAR CART ── */}
       <div className="hidden lg:flex w-96 bg-white rounded-3xl flex-col border border-border shadow-premium h-[calc(100vh-2rem)] sticky top-4">
-        <div className="p-6 border-b border-border">
+        {editingOrderId && (
+          <div className="bg-highlight text-white p-3 font-bold text-sm flex justify-between items-center rounded-t-3xl">
+            <span>Editando Pedido (ID: {activeOrders.find(o => o.id === editingOrderId)?.displayId})</span>
+            <button onClick={cancelEditOrder} className="bg-white/20 hover:bg-white/40 p-1 rounded"><X size={16} /></button>
+          </div>
+        )}
+        <div className={`p-6 border-b border-border ${editingOrderId ? '' : 'rounded-t-3xl'}`}>
           <h3 className="font-heading font-bold text-xl text-textPrimary flex items-center gap-2"><ShoppingCart className="text-accent" size={24} /> Pedido Atual</h3>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -417,14 +520,31 @@ export const POS: React.FC<POSProps> = ({
                   <h4 className="text-xs font-bold text-textSecondary uppercase tracking-wider mb-2 pl-2">Contas Abertas</h4>
                   <div className="space-y-2">
                     {activeOrders.map(tab => (
-                      <div key={tab.id} onClick={() => { setSelectedTabToPay(tab); setShowCheckout(true); }} className="p-3 bg-blue-50 border border-blue-100 rounded-xl flex justify-between items-center cursor-pointer hover:bg-blue-100 transition-colors">
-                        <div>
-                          <span className="font-bold text-textPrimary block">{tab.customerName || 'Mesa Sem Nome'}</span>
-                          <span className="text-xs text-textSecondary">{tab.items.length} itens</span>
+                      <div key={tab.id} className="p-3 bg-blue-50 border border-blue-100 rounded-xl flex justify-between items-center hover:bg-blue-100 transition-colors">
+                        <div className="flex-1 min-w-0 pr-2 cursor-pointer" onClick={() => { setSelectedTabToPay(tab); setShowCheckout(true); }}>
+                          <span className="font-bold text-textPrimary block truncate">{tab.customerName || 'Mesa Sem Nome'}</span>
+                          <span className="text-xs text-gray-500 block truncate mt-0.5 mb-0.5">
+                            {tab.items.map(item => `${item.name}${item.quantity > 1 ? ` (${item.quantity})` : ''}`).join(', ')}
+                          </span>
+                          <span className="text-[10px] text-textSecondary font-medium">{tab.items.length} itens</span>
                         </div>
-                        <div className="text-right">
+                        <div className="text-right flex flex-col items-end gap-2 shrink-0">
                           <span className="text-accent font-bold block">R$ {tab.total.toFixed(2)}</span>
-                          <span className="text-[10px] text-accent font-bold uppercase">Pagar</span>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleEditOrder(tab); }}
+                              className="text-xs font-bold bg-white text-gray-700 px-2 py-1 rounded shadow-sm hover:bg-gray-100 flex items-center gap-1 border border-border"
+                              title="Editar Pedido"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => { setSelectedTabToPay(tab); setShowCheckout(true); }}
+                              className="text-[10px] text-accent font-bold uppercase bg-accent/10 px-2 py-1 rounded"
+                            >
+                              Pagar
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -621,10 +741,10 @@ export const POS: React.FC<POSProps> = ({
                       <button
                         onClick={() => processOrder(true)}
                         disabled={isPlacingOrder}
-                        className="flex-[3] bg-highlight hover:bg-yellow-600 text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                        className={`flex-[3] ${editingOrderId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-highlight hover:bg-yellow-600'} text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2 disabled:opacity-50`}
                       >
-                        {isPlacingOrder ? <Loader2 className="animate-spin" size={18} /> : <ChefHat size={18} />}
-                        {isPlacingOrder ? 'PROCESSANDO...' : 'Enviar p/ Cozinha'}
+                        {isPlacingOrder ? <Loader2 className="animate-spin" size={18} /> : (editingOrderId ? <CheckCircle size={18} /> : <ChefHat size={18} />)}
+                        {isPlacingOrder ? 'PROCESSANDO...' : (editingOrderId ? 'Salvar Alterações' : 'Enviar p/ Cozinha')}
                       </button>
                     </div>
                   ) : (
@@ -633,10 +753,10 @@ export const POS: React.FC<POSProps> = ({
                       <button
                         onClick={() => processOrder(false)}
                         disabled={isPlacingOrder || (paymentMethod === 'CASH' && (parseFloat(receivedAmountStr) || 0) < finalTotal)}
-                        className="flex-[3] bg-success hover:bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className={`flex-[3] ${editingOrderId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-success hover:bg-green-600'} text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed`}
                       >
                         {isPlacingOrder ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle size={18} />}
-                        {isPlacingOrder ? 'PROCESSANDO...' : 'Finalizar Pedido'}
+                        {isPlacingOrder ? 'PROCESSANDO...' : (editingOrderId ? 'Atualizar & Finalizar' : 'Finalizar Pedido')}
                       </button>
                     </div>
                   )
@@ -686,6 +806,52 @@ export const POS: React.FC<POSProps> = ({
                       .map(addon => {
                         const selectedAddon = modalSelectedAddOns.find(a => a.id === addon.id);
                         const q = selectedAddon ? selectedAddon.quantity : 0;
+
+                        // -- Descobrir Quantidade Máxima Permitida do Adicional --
+                        let canAddMore = true;
+                        if (addon.ingredientId) {
+                          const linkedIng = inventory.find(i => i.id === addon.ingredientId);
+                          if (linkedIng) {
+                            // Demanda Global (Já no Carrinho)
+                            let currentDemand = 0;
+                            cart.forEach(cItem => {
+                              const cQty = Number(cItem.quantity) || 0;
+                              if (cItem.selectedAddOns) {
+                                cItem.selectedAddOns.forEach(cAddon => {
+                                  const cAddonDef = addOns.find(x => x.id === cAddon.id);
+                                  if (cAddonDef?.ingredientId === addon.ingredientId) {
+                                    currentDemand += (Number(cAddon.quantity) * cQty);
+                                  }
+                                });
+                              }
+                              // Conta se o lanche consome do mesmo ingrediente na Receita Base
+                              const rec = cItem.recipe || RECIPES[cItem.id];
+                              if (rec) {
+                                rec.forEach(r => {
+                                  if (r.ingredientId === addon.ingredientId) {
+                                    currentDemand += (Number(r.amount) * cQty);
+                                  }
+                                });
+                              }
+                            });
+
+                            // Demanda Atual do Lanche Aberto no Modal (Receita Base)
+                            const modalQty = Number(modalQuantity) || 0;
+                            const currentLancheRecipe = selectedProduct.recipe || RECIPES[selectedProduct.id];
+                            if (currentLancheRecipe) {
+                              currentLancheRecipe.forEach(r => {
+                                if (r.ingredientId === addon.ingredientId) {
+                                  currentDemand += (Number(r.amount) * modalQty);
+                                }
+                              });
+                            }
+
+                            // A próxima demanda se o usuário clicar no '+' agora
+                            const demandIfAdded = currentDemand + ((q + 1) * modalQty);
+                            canAddMore = demandIfAdded <= linkedIng.currentStock;
+                          }
+                        }
+
                         return (
                           <div key={addon.id} className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${q > 0 ? 'bg-accent/5 border-accent' : 'bg-white border-border'}`}>
                             <div className="flex flex-col">
@@ -695,7 +861,7 @@ export const POS: React.FC<POSProps> = ({
                             <div className="flex items-center gap-2 bg-white rounded-lg p-1 border border-border">
                               <button onClick={() => handleAddOnQty(addon, -1)} className="p-1 hover:bg-gray-50 text-textSecondary"><Minus size={12} /></button>
                               <span className="text-xs font-bold w-4 text-center">{q}</span>
-                              <button onClick={() => handleAddOnQty(addon, 1)} className="p-1 hover:bg-gray-50 text-textSecondary"><Plus size={12} /></button>
+                              <button onClick={() => handleAddOnQty(addon, 1)} disabled={!canAddMore} className={`p-1 hover:bg-gray-50 ${canAddMore ? 'text-textSecondary' : 'text-gray-200 cursor-not-allowed'}`}><Plus size={12} /></button>
                             </div>
                           </div>
                         );

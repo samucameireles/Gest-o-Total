@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
-import { Bike, Plus, Trash2, Map, Save, X, Phone, User, DollarSign, Package, Calendar } from 'lucide-react';
+import { Bike, Plus, Trash2, Map, Save, X, Phone, User, DollarSign, Package, Calendar, Loader2 } from 'lucide-react';
 import { Driver, NeighborhoodFee, Order, DailyHistory } from '../types';
+
+import { supabase } from '../lib/supabase';
+import { useTheme } from '../contexts/ThemeContext';
 
 interface MotoboysProps {
   drivers: Driver[];
-  onAddDriver: (name: string) => void;
+  onAddDriver: (name: string, phone?: string) => void;
   onRemoveDriver: (id: string) => void;
   neighborhoodFees: NeighborhoodFee[];
   onUpdateFee: (neighborhood: string, price: number) => void;
@@ -16,42 +19,161 @@ interface MotoboysProps {
 
 export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemoveDriver, neighborhoodFees, onUpdateFee, onRemoveFee, orders, dailyHistory, onFetchOrderDetails }) => {
   const [newDriverName, setNewDriverName] = useState('');
+  const [newDriverPhone, setNewDriverPhone] = useState('');
+
+  const formatPhoneNumber = (value: string) => {
+    let v = value.replace(/\D/g, "");
+    v = v.replace(/^(\d{2})(\d)/g, "($1) $2");
+    v = v.replace(/(\d)(\d{4})$/, "$1-$2");
+    return v.substring(0, 15);
+  };
+
   const [newNeighborhood, setNewNeighborhood] = useState('');
   const [newFeePrice, setNewFeePrice] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
 
-  // V10: History View
   const [viewMode, setViewMode] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toLocaleDateString('pt-BR').split('/').reverse().join('-')); // YYYY-MM-DD
+  const [historyOrders, setHistoryOrders] = useState<Order[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  // V19: Painel de Acerto Financeiro
+  const [settlementDriverId, setSettlementDriverId] = useState<string>('');
+  const [feeType, setFeeType] = useState<'DELIVERY_FEE' | 'FIXED'>('DELIVERY_FEE');
+  const [fixedFeeValue, setFixedFeeValue] = useState<string>('');
+  const [dailyRate, setDailyRate] = useState<string>('');
+  const [advances, setAdvances] = useState<string>('');
 
   React.useEffect(() => {
-    if (dailyHistory.length > 0) {
-      const today = new Date().toLocaleDateString('pt-BR').split('/').reverse().join('-');
-      const hasToday = dailyHistory.find(h => h.id === today);
-      if (!hasToday && selectedDate === today) {
-        setSelectedDate(dailyHistory[0].id);
+    if (viewMode !== 'HISTORY' || !selectedDate) return;
+
+    const fetchHistory = async () => {
+      setIsLoadingHistory(true);
+      try {
+        const startOfDay = new Date(`${selectedDate}T00:00:00`).toISOString();
+        const endOfDay = new Date(`${selectedDate}T23:59:59.999`).toISOString();
+
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('type', 'DELIVERY')
+          .in('status', ['DELIVERED', 'ARCHIVED', 'CONCLUIDO'])
+          .gte('created_at', startOfDay)
+          .lte('created_at', endOfDay);
+
+        if (error) throw error;
+
+        const mappedOrders: Order[] = (data || []).map(o => {
+          let delDet = o.delivery_details;
+          if (typeof delDet === 'string') {
+            try { delDet = JSON.parse(delDet); } catch (e) { }
+          }
+          let cName = o.customer_name;
+          if (!cName && o.type === 'DELIVERY' && delDet?.customerName) {
+            cName = delDet.customerName;
+          }
+
+          return {
+            id: o.id,
+            displayId: o.display_id,
+            total: o.total,
+            discount: o.discount,
+            status: o.status,
+            type: o.type,
+            isPaid: o.is_paid,
+            kitchenDismissed: o.kitchen_dismissed,
+            deliveryDetails: delDet,
+            paymentMethod: o.payment_method,
+            createdAt: new Date(o.created_at).getTime(),
+            assignedDriverId: o.driver_id,
+            customerName: cName,
+            tableName: o.table_name,
+            receivedAmount: o.received_amount,
+            changeAmount: o.change_amount,
+            deliveryFee: o.delivery_fee || 0,
+            items: [] // Intencionalmente vazio para acionar o fetch on-demand no modal
+          };
+        });
+        setHistoryOrders(mappedOrders);
+      } catch (err) {
+        console.error("Erro ao buscar histórico de entregas:", err);
+      } finally {
+        setIsLoadingHistory(false);
       }
+    };
+
+    fetchHistory();
+  }, [selectedDate, viewMode]);
+
+  const displayedOrders = viewMode === 'HISTORY' ? historyOrders : orders;
+  let displayedDrivers = drivers;
+
+  if (viewMode === 'HISTORY') {
+    const driverMap = new globalThis.Map<string, any>();
+    historyOrders.forEach(o => {
+      if (o.assignedDriverId) {
+        if (!driverMap.has(o.assignedDriverId)) {
+          const baseDriver = drivers.find(d => d.id === o.assignedDriverId);
+          driverMap.set(o.assignedDriverId, {
+            id: o.assignedDriverId,
+            name: baseDriver ? baseDriver.name : 'Motoboy Removido',
+            deliveriesCount: 0,
+            commissionTotal: 0,
+            history: [],
+            active: true
+          });
+        }
+        const d = driverMap.get(o.assignedDriverId);
+        d.deliveriesCount += 1;
+        d.commissionTotal += (o.deliveryFee || 0);
+        d.history.push(o.displayId);
+      }
+    });
+    displayedDrivers = Array.from(driverMap.values());
+  }
+
+  const totalEntregas = historyOrders.length;
+  const totalTaxas = historyOrders.reduce((sum, o) => sum + (o.deliveryFee || 0), 0);
+
+  // --- Motor de Cálculo do Acerto Financeiro ---
+  const settlementData = React.useMemo(() => {
+    if (!settlementDriverId) return null;
+
+    // Filtra apenas pedidos DO MOTOBOY selecionado
+    const driverOrders = historyOrders.filter(o => o.assignedDriverId === settlementDriverId);
+
+    // dinheiroRecolhido = soma total de todos os pedidos onde o método é 'CASH'
+    const dinheiroRecolhido = driverOrders.reduce((sum, o) => o.paymentMethod === 'CASH' ? sum + o.total : sum, 0);
+
+    // ganhoCorridas
+    let ganhoCorridas = 0;
+    if (feeType === 'DELIVERY_FEE') {
+      ganhoCorridas = driverOrders.reduce((sum, o) => sum + (o.deliveryFee || 0), 0);
+    } else {
+      const fixed = parseFloat(fixedFeeValue) || 0;
+      ganhoCorridas = driverOrders.length * fixed;
     }
-  }, [dailyHistory]);
 
-  // Determine what data to show
-  // If Active: use props.drivers and props.orders
-  // If History: find entry in dailyHistory. Use entry.drivers (if exists) and entry.orders
+    const diaria = parseFloat(dailyRate) || 0;
+    const vales = parseFloat(advances) || 0;
 
-  const historyEntry = viewMode === 'HISTORY' ? dailyHistory.find(h => h.id === selectedDate) : null;
+    const ganhoLiquido = ganhoCorridas + diaria - vales;
+    const acertoFinal = dinheiroRecolhido - ganhoLiquido;
 
-  const displayedDrivers = viewMode === 'HISTORY'
-    ? (historyEntry?.drivers || []) // Use snapshot if available
-    : drivers;
-
-  const displayedOrders = viewMode === 'HISTORY'
-    ? (historyEntry?.orders || [])
-    : orders;
+    return {
+      dinheiroRecolhido,
+      ganhoCorridas,
+      ganhoLiquido,
+      acertoFinal,
+      deliveriesCount: driverOrders.length
+    };
+  }, [settlementDriverId, historyOrders, feeType, fixedFeeValue, dailyRate, advances]);
 
   const handleAddDriverHandler = () => {
     if (newDriverName.trim()) {
-      onAddDriver(newDriverName);
+      onAddDriver(newDriverName, newDriverPhone);
       setNewDriverName('');
+      setNewDriverPhone('');
     }
   };
 
@@ -109,15 +231,142 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
           </div>
 
           {viewMode === 'HISTORY' && (
-            <div className="flex items-center gap-2 pb-2 border-b border-border border-dashed">
-              <Calendar size={16} className="text-slate-500" />
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={e => setSelectedDate(e.target.value)}
-                className="bg-transparent font-bold text-slate-700 outline-none w-full"
-              />
-              {!historyEntry && <span className="text-xs text-red-500 flex-shrink-0">Sem dados</span>}
+            <div className="flex flex-col gap-4 pb-4 border-b border-border border-dashed">
+              <div className="flex items-center gap-2">
+                <Calendar size={16} className="text-slate-500" />
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={e => setSelectedDate(e.target.value)}
+                  className="bg-transparent font-bold text-slate-700 outline-none w-full"
+                />
+              </div>
+
+              {/* V17: Metrics Panel */}
+              <div className="flex gap-4">
+                <div className="flex-1 bg-blue-50 border border-blue-100 p-3 rounded-xl flex flex-col justify-center items-center">
+                  <span className="text-[9px] text-blue-600 font-bold uppercase tracking-wider mb-1">Qtd Entregas</span>
+                  <span className="text-xl font-black text-blue-900">{totalEntregas}</span>
+                </div>
+                <div className="flex-1 bg-green-50 border border-green-100 p-3 rounded-xl flex flex-col justify-center items-center">
+                  <span className="text-[9px] text-green-600 font-bold uppercase tracking-wider mb-1">Total Taxas</span>
+                  <span className="text-xl font-black text-green-900">R$ {totalTaxas.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* PAINEL DE ACERTO FINANCEIRO MOTOBOY */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 mt-2">
+                <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2"><DollarSign size={18} className="text-green-600" /> Acerto Financeiro</h3>
+
+                <div className="flex gap-3 mb-4">
+                  <select className="flex-[2] bg-white border text-sm font-bold text-slate-700 border-slate-200 rounded-lg p-3 outline-none focus:border-accent" value={settlementDriverId} onChange={e => setSettlementDriverId(e.target.value)}>
+                    <option value="">Selecione um Motoboy...</option>
+                    {displayedDrivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+
+                  <select className="flex-1 bg-white border text-sm font-bold text-slate-700 border-slate-200 rounded-lg p-3 outline-none focus:border-accent" value={feeType} onChange={e => setFeeType(e.target.value as any)}>
+                    <option value="DELIVERY_FEE">Taxa do Pedido</option>
+                    <option value="FIXED">Taxa Fixa</option>
+                  </select>
+                </div>
+
+                {settlementDriverId && (
+                  <div className="space-y-4 animate-in fade-in zoom-in-95 duration-200">
+                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                      {feeType === 'FIXED' && (
+                        <div>
+                          <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1 block">Valor Fixo (R$)</label>
+                          <input type="number" step="0.50" value={fixedFeeValue} onChange={e => setFixedFeeValue(e.target.value)} className="w-full border border-slate-200 rounded-lg p-2.5 text-sm font-bold bg-white outline-none focus:border-accent" placeholder="Ex: 5.00" />
+                        </div>
+                      )}
+                      <div>
+                        <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1 block">Diária (R$)</label>
+                        <input type="number" step="1.00" value={dailyRate} onChange={e => setDailyRate(e.target.value)} className="w-full border border-slate-200 rounded-lg p-2.5 text-sm font-bold bg-white outline-none focus:border-accent" placeholder="Ex: 50.00" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1 block">Vales/Adiant. (R$)</label>
+                        <input type="number" step="1.00" value={advances} onChange={e => setAdvances(e.target.value)} className="w-full border border-slate-200 rounded-lg p-2.5 text-sm font-bold bg-white outline-none focus:border-accent" placeholder="Ex: 20.00" />
+                      </div>
+                    </div>
+
+                    {/* CARDS RESUMO */}
+                    {settlementData && (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-sm">
+                          <span className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">Ganhos do Motoboy</span>
+                          <span className="block text-2xl font-black text-slate-800">R$ {settlementData.ganhoLiquido.toFixed(2)}</span>
+                        </div>
+                        <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-sm">
+                          <span className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">Dinheiro no Caixa</span>
+                          <span className="block text-2xl font-black text-slate-800">R$ {settlementData.dinheiroRecolhido.toFixed(2)}</span>
+                        </div>
+                        {/* ACERTO DESTAQUE */}
+                        <div className={`p-4 rounded-xl shadow-sm border ${settlementData.acertoFinal > 0 ? 'bg-red-50 border-red-200' : settlementData.acertoFinal < 0 ? 'bg-green-50 border-green-200' : 'bg-slate-100 border-slate-300'}`}>
+                          <span className="block text-[10px] font-bold mb-1 uppercase tracking-wider text-slate-600">O Acerto Final</span>
+                          {settlementData.acertoFinal > 0 && (
+                            <span className="block text-sm font-bold text-red-700 leading-tight">Moto devolve ao Caixa:<br /><span className="text-2xl font-black tracking-tight">R$ {settlementData.acertoFinal.toFixed(2)}</span></span>
+                          )}
+                          {settlementData.acertoFinal < 0 && (
+                            <span className="block text-sm font-bold text-green-700 leading-tight">Caixa paga ao Moto:<br /><span className="text-2xl font-black tracking-tight">R$ {Math.abs(settlementData.acertoFinal).toFixed(2)}</span></span>
+                          )}
+                          {settlementData.acertoFinal === 0 && (
+                            <span className="block text-sm font-bold text-slate-700 leading-tight">Acerto Zerado<br /><span className="text-2xl font-black tracking-tight">R$ 0.00</span></span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* WHATSAPP BUTTON */}
+                    {settlementData && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const driverBase = drivers.find(d => d.id === settlementDriverId);
+                          const driverName = driverBase?.name || displayedDrivers.find(d => d.id === settlementDriverId)?.name || 'Motoboy';
+
+                          const totalGanhos = settlementData.ganhoCorridas + parseFloat(dailyRate || '0');
+                          const valesRetirados = parseFloat(advances) || 0;
+
+                          let statusAcerto = '';
+                          if (settlementData.acertoFinal > 0) {
+                            statusAcerto = `Motoboy devolve R$ ${settlementData.acertoFinal.toFixed(2).replace('.', ',')}`;
+                          } else if (settlementData.acertoFinal < 0) {
+                            statusAcerto = `Caixa paga R$ ${Math.abs(settlementData.acertoFinal).toFixed(2).replace('.', ',')}`;
+                          } else {
+                            statusAcerto = 'Acerto Zerado';
+                          }
+
+                          const msgLines = `\uD83D\uDEF5 *Resumo do Dia | ${driverName}*
+\uD83D\uDCC5 Data: ${selectedDate.split('-').reverse().join('/')}
+
+\uD83D\uDCE6 Entregas Realizadas: *${settlementData.deliveriesCount}*
+\uD83D\uDCB8 Ganhos (Corridas + Di\u00E1ria): *R$ ${totalGanhos.toFixed(2).replace('.', ',')}*${valesRetirados > 0 ? `\n\uD83D\uDCC9 Vales Retirados: *- R$ ${valesRetirados.toFixed(2).replace('.', ',')}*` : ''}
+\uD83D\uDCB0 Ganho L\u00EDquido Final: *R$ ${settlementData.ganhoLiquido.toFixed(2).replace('.', ',')}*
+
+\uD83D\uDCB5 Dinheiro Recolhido: *R$ ${settlementData.dinheiroRecolhido.toFixed(2).replace('.', ',')}*
+
+\u26A0\uFE0F *ACERTO FINAL:*
+*${statusAcerto}*`;
+
+                          const textoCodificado = encodeURIComponent(msgLines);
+
+                          if (driverBase?.phone) {
+                            const numeroLimpo = driverBase.phone.replace(/\D/g, '');
+                            window.open(`https://wa.me/55${numeroLimpo}?text=${textoCodificado}`, '_blank', 'noopener,noreferrer');
+                          } else {
+                            alert("Cadastre o WhatsApp deste motoboy para enviar a mensagem diretamente!");
+                            window.open(`https://wa.me/?text=${textoCodificado}`, '_blank', 'noopener,noreferrer');
+                          }
+                        }}
+                        className="w-full bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold py-4 text-sm rounded-xl flex items-center justify-center gap-2 transition-transform active:scale-95 shadow-lg shadow-green-500/20">
+                        <Phone size={18} /> Enviar Resumo (WhatsApp)
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -127,16 +376,22 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
         </div>
 
         {viewMode === 'ACTIVE' && (
-          <div className="p-6 border-b border-border bg-white flex gap-2">
+          <div className="p-6 border-b border-border bg-white flex flex-col sm:flex-row gap-2">
             <input
               value={newDriverName}
               onChange={(e) => setNewDriverName(e.target.value)}
               placeholder="Nome do Motoboy"
+              className="flex-[2] bg-background border border-border rounded-xl px-4 py-3 outline-none focus:border-accent"
+            />
+            <input
+              value={newDriverPhone}
+              onChange={(e) => setNewDriverPhone(formatPhoneNumber(e.target.value))}
+              placeholder="WhatsApp (Ex: 11 99999-9999)"
               className="flex-1 bg-background border border-border rounded-xl px-4 py-3 outline-none focus:border-accent"
             />
             <button
               onClick={handleAddDriverHandler}
-              className="bg-accent hover:bg-accentDark text-white px-6 rounded-xl font-bold flex items-center gap-2"
+              className="bg-accent hover:bg-accentDark text-white px-6 rounded-xl font-bold flex items-center justify-center gap-2 py-3"
             >
               <Plus size={18} /> Adicionar
             </button>
@@ -144,7 +399,17 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
         )}
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {displayedDrivers.map(driver => (
+          {isLoadingHistory && viewMode === 'HISTORY' && (
+            <div className="p-10 flex items-center justify-center">
+              <Loader2 size={32} className="text-accent animate-spin" />
+            </div>
+          )}
+          {(!isLoadingHistory && displayedDrivers.length === 0 && viewMode === 'HISTORY') && (
+            <div className="p-8 text-center bg-slate-50 text-slate-500 font-bold text-sm rounded-2xl border border-dashed border-slate-200">
+              Nenhuma entrega registrada nesta data.
+            </div>
+          )}
+          {(!isLoadingHistory) && displayedDrivers.map(driver => (
             <div key={driver.id} className="p-5 bg-background border border-border rounded-2xl hover:shadow-md transition-shadow">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-4">
@@ -152,9 +417,12 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
                     <Bike size={24} className="text-textSecondary" />
                   </div>
                   <div>
-                    <p className="font-bold text-textPrimary text-lg">{driver.name}</p>
-                    <p className="text-xs text-textSecondary">
+                    <p className="font-bold text-textPrimary text-lg flex items-center gap-2">{driver.name}</p>
+                    <p className="text-xs text-textSecondary flex items-center gap-2">
                       {driver.deliveriesCount} entregas | <span className="text-success font-bold">R$ {driver.commissionTotal.toFixed(2)}</span>
+                      {driver.phone && (
+                        <span className="flex items-center gap-1 text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full whitespace-nowrap"><Phone size={10} /> {driver.phone}</span>
+                      )}
                     </p>
                   </div>
                 </div>

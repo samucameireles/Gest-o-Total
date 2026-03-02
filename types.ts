@@ -28,6 +28,7 @@ export interface AddOn {
   id: string;
   name: string;
   price: number;
+  ingredientId?: string; // V18: Link to inventory deduction
 }
 
 export interface SelectedAddOn extends AddOn {
@@ -103,6 +104,7 @@ export interface Order {
 export interface Driver {
   id: string;
   name: string;
+  phone?: string;
   deliveriesCount: number;
   commissionTotal: number;
   active: boolean;
@@ -183,6 +185,8 @@ export interface CashRegisterSession {
   totalCardDebit?: number;
   totalMoney?: number;
   totalPix?: number;
+  totalSupply?: number;
+  totalBleed?: number;
 
   status: 'OPEN' | 'CLOSED';
   closingNotes?: string;

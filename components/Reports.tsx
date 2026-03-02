@@ -99,7 +99,7 @@ export const Reports: React.FC<ReportsProps> = ({ orders, dailyHistory = [] }) =
   const ORIGIN_COLORS = ['#CA8A04', '#2563EB', '#10B981'];
 
   // Recent Sales List
-  const recentOrders = [...paidOrders].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
+  const recentOrders = [...paidOrders].sort((a, b) => b.createdAt - a.createdAt);
 
   // V12: Audit Modal State
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);

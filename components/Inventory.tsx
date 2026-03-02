@@ -18,7 +18,7 @@ interface InventoryProps {
     wasteLogs: WasteLog[];
     // V12: AddOns Props
     addOns: AddOn[];
-    onAddAddOn: (name: string, price: number, applyToAll?: boolean) => void;
+    onAddAddOn: (name: string, price: number, applyToAll?: boolean, ingredientId?: string) => void;
     onRemoveAddOn: (id: string) => void;
     categorias: { id: string, label: string }[];
 }
@@ -66,6 +66,7 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, 
     // AddOn Form
     const [newAddOnName, setNewAddOnName] = useState('');
     const [newAddOnPrice, setNewAddOnPrice] = useState('');
+    const [newAddOnIngredient, setNewAddOnIngredient] = useState('');
     const [applyAllAddOn, setApplyAllAddOn] = useState(false);
 
     const filteredInventory = inventory.filter(item => item.name.toLowerCase().includes(filter.toLowerCase()));
@@ -195,9 +196,10 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, 
 
     const handleAddAddOnSubmit = () => {
         if (newAddOnName && newAddOnPrice) {
-            onAddAddOn(newAddOnName, parseFloat(newAddOnPrice), applyAllAddOn);
+            onAddAddOn(newAddOnName, parseFloat(newAddOnPrice), applyAllAddOn, newAddOnIngredient || undefined);
             setNewAddOnName('');
             setNewAddOnPrice('');
+            setNewAddOnIngredient('');
             setApplyAllAddOn(false);
         }
     }
@@ -355,25 +357,41 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, 
             {view === 'ADDONS' && (
                 <div className="flex flex-col h-full p-6 overflow-hidden">
                     <h3 className="font-heading font-bold text-lg mb-4 text-textPrimary flex items-center gap-2"><Tag className="text-highlight" /> Gerenciar Adicionais</h3>
-                    <div className="flex gap-2 mb-6 bg-gray-50 p-4 rounded-xl border border-border">
+                    <div className="flex flex-col md:flex-row gap-2 mb-6 bg-gray-50 p-4 rounded-xl border border-border">
                         <input value={newAddOnName} onChange={e => setNewAddOnName(e.target.value)} placeholder="Nome do Adicional (ex: Bacon)" className="flex-[2] p-3 rounded-xl border border-border outline-none focus:border-accent" />
                         <input value={newAddOnPrice} onChange={e => setNewAddOnPrice(e.target.value)} type="number" placeholder="Preço (R$)" className="flex-1 p-3 rounded-xl border border-border outline-none focus:border-accent" />
-                        <div className="flex items-center gap-2 px-2 bg-white rounded-lg border border-border h-full py-3">
+
+                        <select
+                            value={newAddOnIngredient}
+                            onChange={e => setNewAddOnIngredient(e.target.value)}
+                            className="flex-[2] p-3 rounded-xl border border-border outline-none focus:border-accent bg-white"
+                        >
+                            <option value="">Sem vínculo com estoque</option>
+                            {inventory.map(ing => (
+                                <option key={ing.id} value={ing.id}>Baixar: {ing.name} ({ing.unit})</option>
+                            ))}
+                        </select>
+
+                        <div className="flex items-center gap-2 px-2 bg-white rounded-lg border border-border h-full py-3 md:w-auto w-full">
                             <input type="checkbox" id="applyAll" className="cursor-pointer w-4 h-4 text-accent rounded focus:ring-accent" checked={applyAllAddOn} onChange={(e) => setApplyAllAddOn(e.target.checked)} />
                             <label htmlFor="applyAll" className="text-xs font-bold text-textSecondary cursor-pointer whitespace-nowrap">Vincular a Todos</label>
                         </div>
-                        <button onClick={handleAddAddOnSubmit} className="bg-success text-white px-6 py-3 rounded-xl font-bold hover:bg-green-600 transition-colors h-full">Adicionar</button>
+                        <button onClick={handleAddAddOnSubmit} className="bg-success text-white px-6 py-3 rounded-xl font-bold hover:bg-green-600 transition-colors h-full md:w-auto w-full mt-2 md:mt-0">Adicionar</button>
                     </div>
                     <div className="flex-1 overflow-y-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 content-start">
-                        {addOns.map(addon => (
-                            <div key={addon.id} className="flex justify-between items-center p-4 bg-white border border-border rounded-xl shadow-sm">
-                                <div>
-                                    <p className="font-bold text-textPrimary">{addon.name}</p>
-                                    <p className="text-sm text-success font-bold">+ R$ {addon.price.toFixed(2)}</p>
+                        {addOns.map(addon => {
+                            const linkedIng = inventory.find(i => i.id === addon.ingredientId);
+                            return (
+                                <div key={addon.id} className="flex justify-between items-center p-4 bg-white border border-border rounded-xl shadow-sm">
+                                    <div>
+                                        <p className="font-bold text-textPrimary">{addon.name}</p>
+                                        <p className="text-sm text-success font-bold">+ R$ {addon.price.toFixed(2)}</p>
+                                        {linkedIng && <p className="text-[10px] text-slate-400 font-medium">Abate: 1x {linkedIng.name}</p>}
+                                    </div>
+                                    <button onClick={() => onRemoveAddOn(addon.id)} className="text-textSecondary hover:text-danger p-2 hover:bg-gray-50 rounded-lg"><Trash2 size={18} /></button>
                                 </div>
-                                <button onClick={() => onRemoveAddOn(addon.id)} className="text-textSecondary hover:text-danger p-2 hover:bg-gray-50 rounded-lg"><Trash2 size={18} /></button>
-                            </div>
-                        ))}
+                            );
+                        })}
                         {addOns.length === 0 && <p className="col-span-full text-center text-textSecondary italic mt-10">Nenhum adicional cadastrado.</p>}
                     </div>
                 </div>

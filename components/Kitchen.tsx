@@ -6,9 +6,11 @@ interface KitchenProps {
   orders: Order[];
   onUpdateStatus: (orderId: string, status: OrderStatus) => void;
   onKitchenDismiss: (orderId: string) => void;
+  onBulkPrepareToReady: () => void;
+  onBulkKitchenDismiss: () => void;
 }
 
-export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitchenDismiss }) => {
+export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitchenDismiss, onBulkPrepareToReady, onBulkKitchenDismiss }) => {
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -31,10 +33,18 @@ export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitc
 
       {/* Column 1: EM PREPARAÇÃO */}
       <div className="flex flex-col h-full bg-white rounded-3xl shadow-premium border border-border overflow-hidden">
-        <div className="p-6 border-b border-border bg-background">
+        <div className="p-6 border-b border-border bg-background flex items-center justify-between">
           <h2 className="text-xl font-heading font-extrabold text-textPrimary flex items-center gap-2">
             <Clock className="text-highlight" /> EM PREPARAÇÃO ({prepOrders.length})
           </h2>
+          {prepOrders.length > 0 && (
+            <button
+              onClick={onBulkPrepareToReady}
+              className="text-xs bg-gray-200 hover:bg-gray-300 text-textPrimary font-bold py-1.5 px-3 rounded-lg flex items-center gap-1 transition-colors"
+            >
+              Limpar tudo
+            </button>
+          )}
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
           {prepOrders.map(order => {
@@ -53,18 +63,25 @@ export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitc
                   </div>
                 </div>
 
-                {/* Logistics Info for Delivery */}
-                {order.type === 'DELIVERY' && (
-                  <div className="mb-3 bg-blue-50 p-2 rounded-lg border border-blue-100">
-                    <p className="font-bold text-sm text-textPrimary leading-tight">{order.customerName}</p>
-                    <div className="flex flex-wrap items-center gap-1 mt-1 text-xs text-textSecondary">
-                      <span>{order.deliveryDetails?.street}, {order.deliveryDetails?.number} {order.deliveryDetails?.complement ? `- ${order.deliveryDetails.complement}` : ''}</span>
-                      {order.deliveryDetails?.neighborhood && (
-                        <span className="font-black text-blue-700 bg-blue-100 border border-blue-200 px-1.5 rounded uppercase">{order.deliveryDetails.neighborhood}</span>
-                      )}
+                {/* Customer Info */}
+                <div className="mb-3">
+                  {order.customerName || order.tableName ? (
+                    <p className="font-extrabold text-lg text-textPrimary leading-tight">
+                      {order.type === 'DINE_IN' ? (order.tableName ? `Mesa: ${order.tableName}` : order.customerName) : order.customerName}
+                    </p>
+                  ) : null}
+
+                  {order.type === 'DELIVERY' && (
+                    <div className="mt-1 bg-blue-50 p-2 rounded-lg border border-blue-100">
+                      <div className="flex flex-wrap items-center gap-1 text-xs text-textSecondary">
+                        <span>{order.deliveryDetails?.street}, {order.deliveryDetails?.number} {order.deliveryDetails?.complement ? `- ${order.deliveryDetails.complement}` : ''}</span>
+                        {order.deliveryDetails?.neighborhood && (
+                          <span className="font-black text-blue-700 bg-blue-100 border border-blue-200 px-1.5 rounded uppercase">{order.deliveryDetails.neighborhood}</span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 <div className="space-y-2 mb-4">
                   {order.items.map((item, idx) => (
@@ -103,10 +120,18 @@ export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitc
 
       {/* Column 2: PRONTOS (Independent Flow) */}
       <div className="flex flex-col h-full bg-white rounded-3xl shadow-premium border border-border overflow-hidden">
-        <div className="p-6 border-b border-border bg-background">
+        <div className="p-6 border-b border-border bg-background flex items-center justify-between">
           <h2 className="text-xl font-heading font-extrabold text-textPrimary flex items-center gap-2">
             <CheckCircle className="text-success" /> PRONTOS ({readyOrders.length})
           </h2>
+          {readyOrders.length > 0 && (
+            <button
+              onClick={onBulkKitchenDismiss}
+              className="text-xs bg-gray-200 hover:bg-gray-300 text-textPrimary font-bold py-1.5 px-3 rounded-lg flex items-center gap-1 transition-colors"
+            >
+              Limpar tudo
+            </button>
+          )}
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
           {readyOrders.map(order => (

@@ -88,6 +88,7 @@ export default function Dashboard() {
     const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CREDIT');
     const [receivedAmountStr, setReceivedAmountStr] = useState<string>('');
     const [printerSettings, setPrinterSettings] = useState<PrinterSettings | null>(null);
+    const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
     const printedOrdersRef = React.useRef<Set<string>>(new Set());
 
     // --- Printer Configuration Handler ---
@@ -600,7 +601,7 @@ export default function Dashboard() {
         }
     };
 
-    const handlePlaceOrder = async (items: CartItem[], type: OrderType, paymentMethod: PaymentMethod, deliveryDetails?: DeliveryDetails, dineInName?: string, tableName?: string, sendToKitchenOnly?: boolean, receivedAmount?: number, changeAmount?: number, discount: number = 0, deliveryFee: number = 0) => {
+    const handlePlaceOrder = async (items: CartItem[], type: OrderType, paymentMethod: PaymentMethod, deliveryDetails?: DeliveryDetails, dineInName?: string, tableName?: string, sendToKitchenOnly?: boolean, receivedAmount?: number, changeAmount?: number, discount: number = 0, deliveryFee: number = 0, editingOrderId?: string | null) => {
         if (!selectedUnit || isPlacingOrder) return;
         if (!activeSession) {
             alert('O caixa está FECHADO. Abra o caixa antes de realizar vendas.');
@@ -609,9 +610,19 @@ export default function Dashboard() {
 
         setIsPlacingOrder(true);
         try {
-            const { data: lastOrder } = await supabase.from('orders').select('display_id').order('display_id', { ascending: false }).limit(1).maybeSingle();
-            const currentId = (lastOrder?.display_id || 0) + 1;
-            setOrderSequence(currentId + 1);
+            let currentId = 0;
+            let orderIdStr = editingOrderId;
+
+            if (!editingOrderId) {
+                // Nova venda
+                const { data: lastOrder } = await supabase.from('orders').select('display_id').order('display_id', { ascending: false }).limit(1).maybeSingle();
+                currentId = (lastOrder?.display_id || 0) + 1;
+                setOrderSequence(currentId + 1);
+            } else {
+                // Edição
+                const existingOrder = orders.find(o => o.id === editingOrderId);
+                if (existingOrder) currentId = existingOrder.displayId;
+            }
 
             const subtotal = items.reduce((acc, item) => {
                 const addOnsTotal = item.selectedAddOns?.reduce((sum, addon) => sum + (addon.price * addon.quantity), 0) || 0;
@@ -620,30 +631,52 @@ export default function Dashboard() {
 
             const orderTotal = subtotal - discount + deliveryFee;
 
-            // 1. Insert Order
-            const { data: orderData, error: orderError } = await supabase.from('orders').insert([{
-                tenant_id: selectedUnit.id,
-                display_id: currentId,
-                type,
-                payment_method: paymentMethod,
-                delivery_details: deliveryDetails,
-                status: 'PREPARING',
-                is_paid: paymentMethod !== 'PENDING',
-                total: orderTotal,
-                discount: discount,
-                delivery_fee: deliveryFee,
-                customer_id: undefined,
-                customer_name: type === 'DELIVERY' ? deliveryDetails?.customerName : dineInName,
-                table_name: tableName,
-                kitchen_dismissed: false
-            }]).select().single();
+            if (!editingOrderId) {
+                // 1. Insert Order
+                const { data: orderData, error: orderError } = await supabase.from('orders').insert([{
+                    tenant_id: selectedUnit.id,
+                    display_id: currentId,
+                    type,
+                    payment_method: paymentMethod,
+                    delivery_details: deliveryDetails,
+                    status: 'PREPARING',
+                    is_paid: paymentMethod !== 'PENDING',
+                    total: orderTotal,
+                    discount: discount,
+                    delivery_fee: deliveryFee,
+                    customer_id: undefined,
+                    customer_name: type === 'DELIVERY' ? deliveryDetails?.customerName : dineInName,
+                    table_name: tableName,
+                    kitchen_dismissed: false
+                }]).select().single();
 
-            if (orderError) throw orderError;
+                if (orderError) throw orderError;
+                orderIdStr = orderData.id;
+            } else {
+                // 1B. Update Order
+                const { error: orderError } = await supabase.from('orders').update({
+                    type,
+                    payment_method: paymentMethod,
+                    delivery_details: deliveryDetails,
+                    is_paid: paymentMethod !== 'PENDING' ? true : false,
+                    total: orderTotal,
+                    discount: discount,
+                    delivery_fee: deliveryFee,
+                    customer_name: type === 'DELIVERY' ? deliveryDetails?.customerName : dineInName,
+                    table_name: tableName,
+                    // keep existing status and kitchen_dismissed
+                }).eq('id', editingOrderId);
+
+                if (orderError) throw orderError;
+
+                // Clear old items before inserting new ones
+                await supabase.from('order_items').delete().eq('order_id', editingOrderId);
+            }
 
             // 2. Insert Items (Batch)
             const itemsToInsert = items.map(item => ({
                 tenant_id: selectedUnit.id,
-                order_id: orderData.id,
+                order_id: orderIdStr,
                 product_id: item.id,
                 quantity: item.quantity,
                 price_at_time: item.price,
@@ -681,7 +714,7 @@ export default function Dashboard() {
 
             // 4. Update State & Inventory
             const newOrder: Order = {
-                id: orderData.id,
+                id: orderIdStr as string,
                 displayId: currentId,
                 items,
                 total: orderTotal,
@@ -708,18 +741,35 @@ export default function Dashboard() {
             });
 
             // Update Inventory logic (Optimized Stock Updates)
-            const stockUpdates: Record<string, number> = {};
+            const deducoesEstoque: Record<string, number> = {};
             items.forEach(item => {
+                const itemQty = Number(item.quantity) || 0;
+                // 1. Lanche Base
                 let productRecipe = item.recipe || RECIPES[item.id];
                 if (productRecipe) {
                     productRecipe.forEach(recipeItem => {
-                        const currentVal = stockUpdates[recipeItem.ingredientId] || 0;
-                        stockUpdates[recipeItem.ingredientId] = currentVal + (recipeItem.amount * item.quantity);
+                        const currentVal = deducoesEstoque[recipeItem.ingredientId] || 0;
+                        const recipeAmount = Number(recipeItem.amount) || 0;
+                        deducoesEstoque[recipeItem.ingredientId] = currentVal + (recipeAmount * itemQty);
+                    });
+                }
+
+                // 2. Adicionais (V18: Inventory Link)
+                if (item.selectedAddOns && Array.isArray(item.selectedAddOns) && item.selectedAddOns.length > 0) {
+                    item.selectedAddOns.forEach(addon => {
+                        // Procurar o vínculo real. O AddOn que está no carrinho tem o ingredientId mapeado nele? 
+                        const activeAddonDef = addOns.find(a => a.id === addon.id);
+                        if (activeAddonDef && activeAddonDef.ingredientId) {
+                            const currentVal = deducoesEstoque[activeAddonDef.ingredientId] || 0;
+                            const addonQty = Number(addon.quantity) || 0;
+                            // Quantidade consumida = qtd do lanche * qtd do adicional escolhido
+                            deducoesEstoque[activeAddonDef.ingredientId] = currentVal + (addonQty * itemQty);
+                        }
                     });
                 }
             });
 
-            for (const [ingId, amount] of Object.entries(stockUpdates)) {
+            for (const [ingId, amount] of Object.entries(deducoesEstoque)) {
                 const ing = inventory.find(i => i.id === ingId);
                 if (ing) {
                     await handleUpdateStock(ingId, ing.currentStock - amount);
@@ -780,6 +830,31 @@ export default function Dashboard() {
             setOrders(prev => prev.map(o => o.id === orderId ? { ...o, kitchenDismissed: true } : o));
         } catch (err) { console.error('Error kitchen dismiss:', err); }
     }
+
+    const handleBulkPrepareToReady = async () => {
+        if (!selectedUnit) return;
+        try {
+            const { error } = await supabase.from('orders')
+                .update({ status: 'READY' })
+                .eq('tenant_id', selectedUnit.id)
+                .eq('status', 'PREPARING');
+            if (error) throw error;
+            setOrders(prev => prev.map(o => o.status === 'PREPARING' ? { ...o, status: 'READY' } : o));
+        } catch (err) { console.error('Error bulk updating to ready:', err); }
+    };
+
+    const handleBulkKitchenDismiss = async () => {
+        if (!selectedUnit) return;
+        try {
+            const { error } = await supabase.from('orders')
+                .update({ kitchen_dismissed: true })
+                .eq('tenant_id', selectedUnit.id)
+                .eq('status', 'READY')
+                .eq('kitchen_dismissed', false);
+            if (error) throw error;
+            setOrders(prev => prev.map(o => (o.status === 'READY' && !o.kitchenDismissed) ? { ...o, kitchenDismissed: true } : o));
+        } catch (err) { console.error('Error bulk kitchen dismiss:', err); }
+    };
 
     // --- Category Handlers ---
     const handleAddCategory = async (name: string) => {
@@ -899,18 +974,19 @@ export default function Dashboard() {
         handleUpdateStatus(orderId, status);
     };
 
-    const handleAddDriver = async (name: string) => {
+    const handleAddDriver = async (name: string, phone?: string) => {
         if (!selectedUnit) return;
         try {
             const { data, error } = await supabase.from('drivers').insert([{
                 name,
+                phone: phone || null,
                 active: true,
                 deliveries_count: 0,
                 commission_total: 0,
                 tenant_id: selectedUnit.id
             }]).select().single();
             if (error) throw error;
-            if (data) setDrivers(prev => [...prev, { ...data, deliveriesCount: data.deliveries_count, commissionTotal: data.commission_total } as any]);
+            if (data) setDrivers(prev => [...prev, { ...data, phone: data.phone, deliveriesCount: data.deliveries_count, commissionTotal: data.commission_total } as any]);
         } catch (err: any) {
             console.error('Error adding driver:', err);
             alert('Erro ao adicionar motorista: ' + (err.message || 'Erro desconhecido'));
@@ -1092,12 +1168,13 @@ export default function Dashboard() {
         }
     };
 
-    const handleAddAddOn = async (name: string, price: number, applyToAll: boolean = false) => {
+    const handleAddAddOn = async (name: string, price: number, applyToAll: boolean = false, ingredientId?: string) => {
         if (!selectedUnit) return;
         try {
             const { data, error } = await supabase.from('addons').insert([{
                 name,
                 price,
+                ingredient_id: ingredientId || null,
                 tenant_id: selectedUnit.id
             }]).select().single();
 
@@ -1346,9 +1423,11 @@ export default function Dashboard() {
                     receivedAmountStr={receivedAmountStr}
                     setReceivedAmountStr={setReceivedAmountStr}
                     isPlacingOrder={isPlacingOrder}
+                    editingOrderId={editingOrderId}
+                    setEditingOrderId={setEditingOrderId}
                 />;
             case 'kitchen':
-                return <Kitchen orders={orders} onUpdateStatus={handleUpdateStatus} onKitchenDismiss={handleKitchenDismiss} />;
+                return <Kitchen orders={orders} onUpdateStatus={handleUpdateStatus} onKitchenDismiss={handleKitchenDismiss} onBulkPrepareToReady={handleBulkPrepareToReady} onBulkKitchenDismiss={handleBulkKitchenDismiss} />;
             case 'logistics':
                 return <Logistics orders={orders} drivers={drivers} onAssignDriver={handleAssignDriver} onUpdateStatus={handleDeliveryComplete} />;
             case 'motoboys':
@@ -1401,7 +1480,8 @@ export default function Dashboard() {
 
                     // Fetch AddOns — scoped to this tenant
                     const { data: ads } = await supabase.from('addons').select('*').eq('tenant_id', tenantId);
-                    if (ads) setAddOns(ads as any);
+                    if (ads) setAddOns(ads.map(a => ({ ...a, ingredientId: a.ingredient_id })) as any);
+
 
                     // Fetch Categories — scoped to this tenant
                     const { data: cats } = await supabase.from('categorias').select('*').eq('tenant_id', tenantId).order('nome');
