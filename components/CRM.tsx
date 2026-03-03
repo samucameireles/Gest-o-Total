@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { Users, Search, Plus, MapPin, Phone, Trash2 } from 'lucide-react';
+import { Users, Search, Plus, MapPin, Phone, Trash2, Pencil, X, Check } from 'lucide-react';
 import { Customer } from '../types';
 
 interface CRMProps {
   customers: Customer[];
   onAddCustomer: (c: Omit<Customer, 'id'>) => void;
+  onUpdateCustomer: (id: string, updatedFields: Partial<Customer>) => Promise<void>;
   onRemoveCustomer: (id: string) => void;
 }
 
-export const CRM: React.FC<CRMProps> = ({ customers, onAddCustomer, onRemoveCustomer }) => {
+export const CRM: React.FC<CRMProps> = ({ customers, onAddCustomer, onUpdateCustomer, onRemoveCustomer }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
@@ -16,6 +17,10 @@ export const CRM: React.FC<CRMProps> = ({ customers, onAddCustomer, onRemoveCust
   const [newNumber, setNewNumber] = useState('');
   const [newComplement, setNewComplement] = useState('');
   const [newNeighborhood, setNewNeighborhood] = useState('');
+
+  // Estados de Edição
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<Partial<Customer> | null>(null);
 
   const filtered = customers.filter(c =>
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -38,6 +43,35 @@ export const CRM: React.FC<CRMProps> = ({ customers, onAddCustomer, onRemoveCust
       setNewNumber('');
       setNewComplement('');
       setNewNeighborhood('');
+    }
+  };
+
+  const openEditModal = (c: Customer) => {
+    setEditingCustomer(c);
+    setIsEditModalOpen(true);
+  };
+
+  const closeEditModal = () => {
+    setIsEditModalOpen(false);
+    setEditingCustomer(null);
+  };
+
+  const handleSaveEdit = async () => {
+    if (editingCustomer && editingCustomer.id) {
+      try {
+        await onUpdateCustomer(editingCustomer.id, {
+          name: editingCustomer.name,
+          phone: editingCustomer.phone,
+          street: editingCustomer.street,
+          number: editingCustomer.number,
+          complement: editingCustomer.complement,
+          neighborhood: editingCustomer.neighborhood
+        });
+        alert(`Cadastro de ${editingCustomer.name} atualizado com sucesso!`);
+        closeEditModal();
+      } catch (err) {
+        alert('Erro ao atualizar cliente.');
+      }
     }
   };
 
@@ -69,12 +103,26 @@ export const CRM: React.FC<CRMProps> = ({ customers, onAddCustomer, onRemoveCust
                   <span className="flex items-center gap-1"><MapPin size={12} /> {c.street}, {c.number} {c.complement ? `- ${c.complement}` : ''} - {c.neighborhood}</span>
                 </div>
               </div>
-              <button
-                onClick={() => onRemoveCustomer(c.id)}
-                className="p-2 text-textSecondary hover:text-danger hover:bg-white rounded-lg transition-colors"
-              >
-                <Trash2 size={18} />
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => openEditModal(c)}
+                  className="p-2 text-textSecondary hover:text-accent hover:bg-white rounded-lg transition-colors"
+                  title="Editar Cliente"
+                >
+                  <Pencil size={18} />
+                </button>
+                <button
+                  onClick={() => {
+                    if (window.confirm('Tem certeza que deseja excluir cliente?')) {
+                      onRemoveCustomer(c.id);
+                    }
+                  }}
+                  className="p-2 text-textSecondary hover:text-danger hover:bg-white rounded-lg transition-colors"
+                  title="Excluir Cliente"
+                >
+                  <Trash2 size={18} />
+                </button>
+              </div>
             </div>
           ))}
           {filtered.length === 0 && (
@@ -123,6 +171,89 @@ export const CRM: React.FC<CRMProps> = ({ customers, onAddCustomer, onRemoveCust
           </button>
         </div>
       </div>
+
+      {/* Edit Modal */}
+      {isEditModalOpen && editingCustomer && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl p-6 relative">
+            <button
+              onClick={closeEditModal}
+              className="absolute top-4 right-4 text-textSecondary hover:text-textPrimary bg-slate-100 hover:bg-slate-200 p-2 rounded-full transition-colors"
+            >
+              <X size={20} />
+            </button>
+
+            <h2 className="text-xl font-heading font-extrabold text-textPrimary mb-6 pr-8">
+              Editar Cliente
+            </h2>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-textSecondary mb-1 block">Nome Completo</label>
+                <input
+                  className="w-full bg-background border border-border rounded-xl p-3 outline-none focus:border-accent"
+                  value={editingCustomer.name || ''}
+                  onChange={e => setEditingCustomer({ ...editingCustomer, name: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-textSecondary mb-1 block">Telefone (Whatsapp)</label>
+                <input
+                  className="w-full bg-background border border-border rounded-xl p-3 outline-none focus:border-accent"
+                  value={editingCustomer.phone || ''}
+                  onChange={e => setEditingCustomer({ ...editingCustomer, phone: e.target.value })}
+                />
+              </div>
+              <div className="flex gap-2">
+                <div className="w-[70%]">
+                  <label className="text-xs font-bold text-textSecondary mb-1 block">Rua</label>
+                  <input
+                    className="w-full bg-background border border-border rounded-xl p-3 outline-none focus:border-accent"
+                    value={editingCustomer.street || ''}
+                    onChange={e => setEditingCustomer({ ...editingCustomer, street: e.target.value })}
+                  />
+                </div>
+                <div className="w-[30%]">
+                  <label className="text-xs font-bold text-textSecondary mb-1 block">Número</label>
+                  <input
+                    type="text"
+                    className="w-full bg-background border border-border rounded-xl p-3 outline-none focus:border-accent"
+                    value={editingCustomer.number || ''}
+                    onChange={e => setEditingCustomer({ ...editingCustomer, number: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-textSecondary mb-1 block">Complemento</label>
+                <input
+                  className="w-full bg-background border border-border rounded-xl p-3 outline-none focus:border-accent"
+                  value={editingCustomer.complement || ''}
+                  onChange={e => setEditingCustomer({ ...editingCustomer, complement: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-textSecondary mb-1 block">Bairro</label>
+                <input
+                  className="w-full bg-background border border-border rounded-xl p-3 outline-none focus:border-accent"
+                  value={editingCustomer.neighborhood || ''}
+                  onChange={e => setEditingCustomer({ ...editingCustomer, neighborhood: e.target.value })}
+                />
+              </div>
+
+              <div className="pt-2">
+                <button
+                  onClick={handleSaveEdit}
+                  className="w-full bg-accent text-white font-bold py-3 rounded-xl hover:bg-accent/90 transition-colors shadow-lg flex items-center justify-center gap-2"
+                >
+                  <Check size={20} />
+                  Salvar Alterações
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

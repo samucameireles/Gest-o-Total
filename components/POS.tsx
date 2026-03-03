@@ -289,9 +289,17 @@ export const POS: React.FC<POSProps> = ({
   const tabSubtotal = selectedTabToPay ? selectedTabToPay.total : 0;
   const currentTotal = selectedTabToPay ? tabSubtotal : cartSubtotal;
 
-  // Delivery Fee Calculation V16
-  const deliveryFee = (orderType === 'DELIVERY' && !selectedTabToPay)
-    ? neighborhoodFees.find(f => f.name.toLowerCase() === deliveryForm.neighborhood.toLowerCase())?.price || 0
+  const normalizeText = (text: string) => {
+    if (!text) return '';
+    return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  };
+
+  const matchedNeighborhood = neighborhoodFees.find(f => normalizeText(f.name) === normalizeText(deliveryForm.neighborhood));
+  const isAreaServed = deliveryForm.neighborhood ? !!matchedNeighborhood : null;
+
+  // Delivery Fee Calculation (Strict Validation)
+  const deliveryFee = (orderType === 'DELIVERY' && !selectedTabToPay && matchedNeighborhood)
+    ? matchedNeighborhood.price
     : 0;
 
   const discountAmount = appliedCoupon ? (currentTotal * (appliedCoupon.discountPercent / 100)) : 0;
@@ -657,7 +665,7 @@ export const POS: React.FC<POSProps> = ({
                         {showNeighborhoodSuggestions && deliveryForm.neighborhood && (
                           <div className="absolute bottom-full left-0 w-full bg-white border border-border rounded-lg shadow-lg z-20 max-h-40 overflow-y-auto mb-1">
                             {neighborhoodFees
-                              .filter(f => f.name.toLowerCase().includes(deliveryForm.neighborhood.toLowerCase()))
+                              .filter(f => normalizeText(f.name).includes(normalizeText(deliveryForm.neighborhood)))
                               .map(f => (
                                 <div
                                   key={f.id}
@@ -671,6 +679,14 @@ export const POS: React.FC<POSProps> = ({
                                   <span className="text-accent font-bold">R$ {f.price.toFixed(2)}</span>
                                 </div>
                               ))}
+                          </div>
+                        )}
+                        {isAreaServed === false && deliveryForm.neighborhood.length > 0 && (
+                          <div className="absolute top-full left-0 right-0 mt-1 flex items-start gap-1.5 bg-red-50 border border-red-100 rounded-lg p-2 z-10 shadow-sm animate-in fade-in slide-in-from-top-1">
+                            <MapPin className="text-gray-400 shrink-0 mt-0.5" size={14} />
+                            <span className="text-red-600 font-bold text-[10px] leading-tight flex-1">
+                              Entrega indisponível: Bairro fora da área de cobertura.
+                            </span>
                           </div>
                         )}
                       </div>
@@ -752,7 +768,7 @@ export const POS: React.FC<POSProps> = ({
                       <button onClick={() => setShowCheckout(false)} className="flex-1 bg-white border border-border font-bold rounded-xl text-sm" disabled={isPlacingOrder}>Voltar</button>
                       <button
                         onClick={() => processOrder(false)}
-                        disabled={isPlacingOrder || (paymentMethod === 'CASH' && (parseFloat(receivedAmountStr) || 0) < finalTotal)}
+                        disabled={isPlacingOrder || (paymentMethod === 'CASH' && (parseFloat(receivedAmountStr) || 0) < finalTotal) || (orderType === 'DELIVERY' && isAreaServed === false)}
                         className={`flex-[3] ${editingOrderId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-success hover:bg-green-600'} text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed`}
                       >
                         {isPlacingOrder ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle size={18} />}

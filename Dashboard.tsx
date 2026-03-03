@@ -1017,6 +1017,26 @@ export default function Dashboard() {
             }
         } catch (err) { console.error('Error updating fee:', err); }
     };
+
+    const handleBulkImportFees = async (newFees: { name: string, price: number }[]) => {
+        if (!selectedUnit) return;
+        try {
+            const insertData = newFees.map(f => ({
+                name: f.name,
+                price: f.price,
+                tenant_id: selectedUnit.id
+            }));
+            const { data, error } = await supabase.from('fees').insert(insertData).select();
+            if (error) throw error;
+            if (data) {
+                setNeighborhoodFees(prev => [...prev, ...data as any]);
+            }
+        } catch (err: any) {
+            console.error('Error bulk inserting fees:', err);
+            throw err;
+        }
+    };
+
     const handleRemoveFee = async (id: string) => {
         try {
             const { error } = await supabase.from('fees').delete().eq('id', id);
@@ -1131,6 +1151,27 @@ export default function Dashboard() {
             alert('Erro ao salvar cliente: ' + (err.message || err.details || 'Erro desconhecido'));
         }
     };
+
+    const handleUpdateCustomer = async (id: string, updatedFields: Partial<Customer>) => {
+        if (!selectedUnit) return;
+        try {
+            const { error } = await supabase.from('customers').update({
+                name: updatedFields.name,
+                phone: updatedFields.phone,
+                street: updatedFields.street,
+                number: updatedFields.number,
+                complement: updatedFields.complement,
+                neighborhood: updatedFields.neighborhood
+            }).eq('id', id).eq('tenant_id', selectedUnit.id);
+
+            if (error) throw error;
+            setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updatedFields } : c));
+        } catch (err: any) {
+            console.error('Error updating customer:', err);
+            throw err;
+        }
+    };
+
     const handleRemoveCustomer = async (id: string) => {
         try {
             const { error } = await supabase.from('customers').delete().eq('id', id);
@@ -1431,11 +1472,11 @@ export default function Dashboard() {
             case 'logistics':
                 return <Logistics orders={orders} drivers={drivers} onAssignDriver={handleAssignDriver} onUpdateStatus={handleDeliveryComplete} />;
             case 'motoboys':
-                return <Motoboys drivers={drivers} onAddDriver={handleAddDriver} onRemoveDriver={handleRemoveDriver} neighborhoodFees={neighborhoodFees} onUpdateFee={handleUpdateFee} onRemoveFee={handleRemoveFee} orders={orders} dailyHistory={dailyHistory} onFetchOrderDetails={handleFetchOrderDetails} />;
+                return <Motoboys drivers={drivers} onAddDriver={handleAddDriver} onRemoveDriver={handleRemoveDriver} neighborhoodFees={neighborhoodFees} onUpdateFee={handleUpdateFee} onRemoveFee={handleRemoveFee} orders={orders} dailyHistory={dailyHistory} onFetchOrderDetails={handleFetchOrderDetails} onBulkImportFees={handleBulkImportFees} />;
             case 'inventory':
                 return <Inventory inventory={inventory} onUpdateStock={handleUpdateStock} onUpdateIngredientName={handleUpdateIngredientName} onAddIngredient={handleAddIngredient} onRemoveIngredient={handleRemoveIngredient} onAddProduct={handleAddProduct} onRemoveProduct={handleRemoveProduct} onUpdateProduct={handleUpdateProduct} products={products} onLogWaste={handleLogWaste} wasteLogs={wasteLogs} addOns={addOns} onAddAddOn={handleAddAddOn} onRemoveAddOn={handleRemoveAddOn} categorias={categorias} />;
             case 'crm':
-                return <CRM customers={customers} onAddCustomer={handleAddCustomer} onRemoveCustomer={handleRemoveCustomer} />;
+                return <CRM customers={customers} onAddCustomer={handleAddCustomer} onUpdateCustomer={handleUpdateCustomer} onRemoveCustomer={handleRemoveCustomer} />;
             case 'reports':
                 return <Reports orders={orders} dailyHistory={dailyHistory} />;
             case 'cashflow':

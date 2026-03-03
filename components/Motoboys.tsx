@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Bike, Plus, Trash2, Map, Save, X, Phone, User, DollarSign, Package, Calendar, Loader2 } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Bike, Plus, Trash2, Map, Save, X, Phone, User, DollarSign, Package, Calendar, Loader2, Check, Pencil } from 'lucide-react';
 import { Driver, NeighborhoodFee, Order, DailyHistory } from '../types';
 
 import { supabase } from '../lib/supabase';
@@ -15,9 +15,10 @@ interface MotoboysProps {
   orders: Order[]; // Received from Dashboard (Active Orders)
   dailyHistory: DailyHistory[];
   onFetchOrderDetails?: (displayId: number) => Promise<Order | null>;
+  onBulkImportFees?: (fees: { name: string, price: number }[]) => Promise<void>;
 }
 
-export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemoveDriver, neighborhoodFees, onUpdateFee, onRemoveFee, orders, dailyHistory, onFetchOrderDetails }) => {
+export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemoveDriver, neighborhoodFees, onUpdateFee, onRemoveFee, orders, dailyHistory, onFetchOrderDetails, onBulkImportFees }) => {
   const [newDriverName, setNewDriverName] = useState('');
   const [newDriverPhone, setNewDriverPhone] = useState('');
 
@@ -30,6 +31,11 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
 
   const [newNeighborhood, setNewNeighborhood] = useState('');
   const [newFeePrice, setNewFeePrice] = useState('');
+  const [defaultFeeValue, setDefaultFeeValue] = useState('5.00');
+  const [isImporting, setIsImporting] = useState(false);
+  const [selectedCity, setSelectedCity] = useState('Todas');
+  const [editingFeeId, setEditingFeeId] = useState<string | null>(null);
+  const [editingFeePrice, setEditingFeePrice] = useState<string>('');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
 
   const [viewMode, setViewMode] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
@@ -185,6 +191,86 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
     }
   };
 
+  const CITIES_DB: Record<string, string[]> = {
+    "Caçapava": [
+      "Centro", "Vila Santos", "Vila Resende", "Vila Antônio Augusto", "Vera Cruz",
+      "Jardim Maria Elmira", "Jardim Rafael", "Jardim Amália", "Parque Residencial Eldorado",
+      "Jardim Shangri-lá", "Vila Galvão", "Piedade", "Caçapava Velha", "Santa Luzia",
+      "Vila Menino Jesus", "Vila Santa Isabel", "Jardim São José", "Parque Alvorada",
+      "Residencial Esperança", "Nova Caçapava", "Vila Pantaleão", "Jardim Panorama",
+      "Jardim Primavera", "Jardim Julieta", "Pinus do Iriguassu", "Aldeias da Serra",
+      "Germana", "Guadalupe", "Marambaia", "Tijuco Preto", "Vila André Martins",
+      "Vila N. Sra. das Graças", "Vila Paraíso", "Vila Periquito", "Vila Rica",
+      "Vila São João", "Village das Flores", "Borda da Mata", "Tataúba", "Jardim Caçapava",
+      "Vila Prudente", "Sapé", "Jardim Vitória"
+    ],
+    "São José dos Campos": [
+      "Jardim Aquarius", "Vila Adyana", "Vila Ema", "Urbanova", "Jardim Satélite",
+      "Jardim das Indústrias", "Jardim América", "Jardim Paulista", "Jardim Oriente",
+      "Bosque dos Eucaliptos", "Parque Industrial", "Vila Industrial", "Centro",
+      "Jardim Esplanada", "Vila Betânia", "Jardim São Dimas", "Nova Esperança",
+      "Jardim Morumbi", "Jardim Colinas", "Jardim Alvorada"
+    ],
+    "Taubaté": [
+      "Centro", "Independência", "Jardim das Nações", "Quiririm", "Vila São José",
+      "Estiva", "Belém", "Jardim Gurilândia", "Vila Costa", "Jardim Maria Augusta",
+      "Jardim Mourisco", "Parque São Luís", "Vila Aparecida", "Vila Edmundo",
+      "Jardim Ouro da Mina", "Parque Três Marias", "Jardim Ana Emília", "Jardim Baronesa"
+    ]
+  };
+
+  const handleFastLoad = async () => {
+    if (!onBulkImportFees) {
+      alert("Operação não suportada nesta versão.");
+      return;
+    }
+    const importCity = selectedCity === 'Todas' ? 'Caçapava' : selectedCity; // default caçapava if Todas selected
+    setIsImporting(true);
+    try {
+      const normalizeText = (text: string) => text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+      const cityList = CITIES_DB[importCity] || [];
+      const existingNames = neighborhoodFees.map(f => normalizeText(f.name));
+      const newNeighborhoods = cityList.filter(bairro => !existingNames.includes(normalizeText(bairro)));
+
+      if (newNeighborhoods.length === 0) {
+        alert(`Todos os bairros de ${importCity} já estão cadastrados!`);
+        setIsImporting(false);
+        return;
+      }
+
+      const defaultPrice = parseFloat(defaultFeeValue) || 0;
+      const insertData = newNeighborhoods.map(name => ({ name, price: defaultPrice }));
+
+      await onBulkImportFees(insertData);
+
+      alert(`⚡ Sucesso! ${newNeighborhoods.length} novos bairros de ${importCity} importados.`);
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao importar bairros.");
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleSaveInlineFee = (id: string, name: string) => {
+    const newPrice = parseFloat(editingFeePrice);
+    if (!isNaN(newPrice) && newPrice >= 0) {
+      onUpdateFee(name, newPrice);
+      setEditingFeeId(null);
+    }
+  };
+
+  const normalizeText = (text: string) => text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+  const displayedFees = useMemo(() => {
+    if (selectedCity === 'Todas') return neighborhoodFees;
+
+    // Filtro por cidade
+    const cityListNames = (CITIES_DB[selectedCity] || []).map(normalizeText);
+    return neighborhoodFees.filter(fee => cityListNames.includes(normalizeText(fee.name)));
+  }, [neighborhoodFees, selectedCity]);
+
   const handleOpenOrder = async (displayId: number) => {
     // Search in displayedOrders
     const order = displayedOrders.find(o => o.displayId === displayId);
@@ -297,7 +383,7 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
                           <span className="block text-2xl font-black text-slate-800">R$ {settlementData.ganhoLiquido.toFixed(2)}</span>
                         </div>
                         <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-sm">
-                          <span className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">Dinheiro no Caixa</span>
+                          <span className="block text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1">Dinheiro no Caixa</span>
                           <span className="block text-2xl font-black text-slate-800">R$ {settlementData.dinheiroRecolhido.toFixed(2)}</span>
                         </div>
                         {/* ACERTO DESTAQUE */}
@@ -354,12 +440,13 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
 
                           if (driverBase?.phone) {
                             const numeroLimpo = driverBase.phone.replace(/\D/g, '');
-                            window.open(`https://wa.me/55${numeroLimpo}?text=${textoCodificado}`, '_blank', 'noopener,noreferrer');
+                            window.open(`https://api.whatsapp.com/send?phone=55${numeroLimpo}&text=${textoCodificado}`, '_blank', 'noopener,noreferrer');
                           } else {
                             alert("Cadastre o WhatsApp deste motoboy para enviar a mensagem diretamente!");
-                            window.open(`https://wa.me/?text=${textoCodificado}`, '_blank', 'noopener,noreferrer');
+                            window.open(`https://api.whatsapp.com/send?text=${textoCodificado}`, '_blank', 'noopener,noreferrer');
                           }
                         }}
+                        type="button"
                         className="w-full bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold py-4 text-sm rounded-xl flex items-center justify-center gap-2 transition-transform active:scale-95 shadow-lg shadow-green-500/20">
                         <Phone size={18} /> Enviar Resumo (WhatsApp)
                       </button>
@@ -473,26 +560,77 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
         </div>
 
         {viewMode === 'ACTIVE' && (
-          <div className="p-6 border-b border-border bg-white flex gap-2">
-            <input
-              value={newNeighborhood}
-              onChange={(e) => setNewNeighborhood(e.target.value)}
-              placeholder="Bairro"
-              className="flex-[2] bg-background border border-border rounded-xl px-4 py-3 outline-none focus:border-accent"
-            />
-            <input
-              value={newFeePrice}
-              onChange={(e) => setNewFeePrice(e.target.value)}
-              placeholder="R$"
-              type="number"
-              className="flex-1 bg-background border border-border rounded-xl px-4 py-3 outline-none focus:border-accent"
-            />
-            <button
-              onClick={handleAddFeeHandler}
-              className="bg-highlight hover:bg-yellow-600 text-white px-4 rounded-xl font-bold flex items-center gap-2"
-            >
-              <Save size={18} />
-            </button>
+          <div className="p-6 border-b border-border bg-white flex flex-col gap-4">
+            {/* Top Selector and Actions */}
+            <div className="flex flex-col sm:flex-row gap-4 items-end">
+              <div className="flex flex-col flex-1">
+                <label className="text-xs font-bold text-textSecondary uppercase mb-1">Cidade</label>
+                <select
+                  value={selectedCity}
+                  onChange={(e) => setSelectedCity(e.target.value)}
+                  className="bg-background border border-border rounded-xl px-4 py-3 outline-none focus:border-accent font-medium text-textPrimary"
+                >
+                  <option value="Todas">Todas as Cidades</option>
+                  <option value="Caçapava">Caçapava</option>
+                  <option value="São José dos Campos">São José dos Campos</option>
+                  <option value="Taubaté">Taubaté</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Quick Load Callout */}
+            {selectedCity !== 'Todas' && (
+              <div className="flex bg-blue-50 border border-blue-100 rounded-xl p-4 justify-between items-center">
+                <div>
+                  <h3 className="text-blue-900 font-bold text-sm flex items-center gap-2">
+                    ⚡ Carga Rápida de Bairros
+                  </h3>
+                  <p className="text-xs text-blue-700 mt-1">Importe bairros de {selectedCity} em lote.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex flex-col items-start bg-white border border-blue-200 rounded-lg px-2 py-1">
+                    <label className="text-[9px] font-bold text-blue-600 uppercase">Taxa Inicial (R$)</label>
+                    <input
+                      type="number"
+                      value={defaultFeeValue}
+                      onChange={(e) => setDefaultFeeValue(e.target.value)}
+                      className="w-16 outline-none text-sm font-bold text-slate-800"
+                    />
+                  </div>
+                  <button
+                    onClick={handleFastLoad}
+                    disabled={isImporting}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-lg font-bold text-xs flex items-center gap-2 shadow-sm disabled:opacity-50 transition-colors"
+                  >
+                    {isImporting ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                    <span className="hidden sm:inline">Importar {selectedCity}</span>
+                    <span className="sm:hidden">Importar</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <input
+                value={newNeighborhood}
+                onChange={(e) => setNewNeighborhood(e.target.value)}
+                placeholder="Nome do Bairro"
+                className="flex-[2] bg-background border border-border rounded-xl px-4 py-3 outline-none focus:border-accent"
+              />
+              <input
+                value={newFeePrice}
+                onChange={(e) => setNewFeePrice(e.target.value)}
+                placeholder="R$ (Taxa)"
+                type="number"
+                className="flex-1 bg-background border border-border rounded-xl px-4 py-3 outline-none focus:border-accent"
+              />
+              <button
+                onClick={handleAddFeeHandler}
+                className="bg-highlight hover:bg-yellow-600 text-white px-4 rounded-xl font-bold flex items-center gap-2 transition-colors"
+              >
+                <Plus size={18} /> <span className="hidden sm:inline">Adicionar</span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -500,33 +638,81 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
           <table className="w-full text-left border-collapse">
             <thead className="text-xs text-textSecondary uppercase bg-background font-bold">
               <tr>
-                <th className="p-4 rounded-tl-xl">Bairro</th>
+                <th className="p-4 rounded-tl-xl text-left">Bairro</th>
                 <th className="p-4 text-center">Valor (R$)</th>
-                <th className="p-4 text-right rounded-tr-xl">Ação</th>
+                <th className="p-4 text-center rounded-tr-xl">Ações</th>
               </tr>
             </thead>
             <tbody>
-              {neighborhoodFees.map(fee => (
-                <tr key={fee.id} className="border-b border-border hover:bg-background/50">
-                  <td className="p-4 font-medium text-textPrimary">{fee.name}</td>
-                  <td className="p-4 text-center font-bold text-textPrimary">{fee.price.toFixed(2)}</td>
-                  <td className="p-4 text-right">
+              {displayedFees.map(fee => (
+                <tr key={fee.id} className={`border-b border-border transition-colors ${editingFeeId === fee.id ? 'bg-orange-50/50' : 'hover:bg-background/50'}`}>
+                  <td className="p-4 font-medium text-textPrimary text-left">{fee.name}</td>
+                  <td className="p-4 text-center">
+                    {editingFeeId === fee.id ? (
+                      <input
+                        type="number"
+                        value={editingFeePrice}
+                        onChange={(e) => setEditingFeePrice(e.target.value)}
+                        className="w-20 px-2 py-1 bg-white border border-accent rounded-lg text-center font-bold text-accent outline-none"
+                        autoFocus
+                        onKeyDown={(e) => e.key === 'Enter' && handleSaveInlineFee(fee.id, fee.name)}
+                      />
+                    ) : (
+                      <span className="font-bold text-textPrimary">R$ {fee.price.toFixed(2)}</span>
+                    )}
+                  </td>
+                  <td className="p-4">
                     {viewMode === 'ACTIVE' && (
-                      <button
-                        onClick={() => onRemoveFee(fee.id)}
-                        className="text-textSecondary hover:text-danger p-2 hover:bg-white rounded-lg transition-colors"
-                      >
-                        <X size={18} />
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        {editingFeeId === fee.id ? (
+                          <>
+                            <button
+                              title="Salvar Taxa"
+                              onClick={() => handleSaveInlineFee(fee.id, fee.name)}
+                              className="text-green-600 hover:text-green-700 bg-green-50 hover:bg-green-100 p-2 rounded-lg transition-colors"
+                            >
+                              <Check size={18} />
+                            </button>
+                            <button
+                              title="Cancelar"
+                              onClick={() => { setEditingFeeId(null); setEditingFeePrice(''); }}
+                              className="text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 p-2 rounded-lg transition-colors"
+                            >
+                              <X size={18} />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              title="Editar Taxa"
+                              onClick={() => { setEditingFeeId(fee.id); setEditingFeePrice(fee.price.toString()); }}
+                              className="text-textSecondary hover:text-accent p-2 hover:bg-white rounded-lg transition-colors"
+                            >
+                              <Pencil size={18} />
+                            </button>
+                            <button
+                              title="Excluir Bairro"
+                              onClick={() => onRemoveFee(fee.id)}
+                              className="text-textSecondary hover:text-danger p-2 hover:bg-white rounded-lg transition-colors"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     )}
                   </td>
                 </tr>
               ))}
+              {displayedFees.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="p-8 text-center text-slate-400 text-sm italic">
+                    Nenhum bairro encontrado para esta seleção.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
-          {neighborhoodFees.length === 0 && (
-            <div className="text-center p-8 text-textSecondary text-sm">Nenhuma taxa cadastrada.</div>
-          )}
         </div>
       </div>
 
@@ -594,7 +780,7 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
                       <p>{selectedOrder.deliveryDetails.street}, {selectedOrder.deliveryDetails.number}</p>
                       <p>{selectedOrder.deliveryDetails.neighborhood} {selectedOrder.deliveryDetails.complement ? `- ${selectedOrder.deliveryDetails.complement}` : ''}</p>
                       <a
-                        href={`https://wa.me/55${selectedOrder.deliveryDetails.phone.replace(/\D/g, '')}`}
+                        href={`https://api.whatsapp.com/send?phone=55${selectedOrder.deliveryDetails.phone.replace(/\D/g, '')}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center gap-2 text-green-600 font-bold mt-2 hover:underline"
