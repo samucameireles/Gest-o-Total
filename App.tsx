@@ -3,6 +3,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { NetworkStatus } from './components/ui/NetworkStatus';
 import Login from './pages/Auth/Login';
 import Register from './pages/Auth/Register';
 import UnitSelection from './pages/UnitSelection';
@@ -53,6 +54,7 @@ export default function App() {
     <ErrorBoundary>
       <ThemeProvider>
         <AuthProvider>
+          <NetworkStatus />
           <BrowserRouter>
             <Routes>
               <Route path="/login" element={<Login />} />

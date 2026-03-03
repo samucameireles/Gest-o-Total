@@ -405,7 +405,6 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
                     {/* WHATSAPP BUTTON */}
                     {settlementData && (
                       <button
-                        type="button"
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();

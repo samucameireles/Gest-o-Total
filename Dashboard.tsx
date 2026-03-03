@@ -91,6 +91,81 @@ export default function Dashboard() {
     const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
     const printedOrdersRef = React.useRef<Set<string>>(new Set());
 
+    // --- WhatsApp Notification State ---
+    const [whatsappToast, setWhatsappToast] = useState<{
+        phone: string;
+        message: string;
+        customerName: string;
+    } | null>(null);
+
+    // --- WhatsApp Notification Logic ---
+    const triggerWhatsAppNotification = (order: Order, triggerType: 'PREPARING' | 'DELIVERY') => {
+        try {
+            // Segura a extração do telefone (trata delivery e presencial)
+            const phone = (order as any)?.customer?.phone || order?.deliveryDetails?.phone || (order.customerName ? customers.find(c => c.name === order.customerName)?.phone : null);
+
+            if (!phone) return; // Regra de Ouro: Sem telefone, não faz nada silenciosamente.
+
+            const nome = order?.customerName || order?.deliveryDetails?.customerName || 'Cliente';
+            const itens = order?.items?.map(i => i.name || 'Item').join(', ') || 'Seu pedido';
+            const endereco = order?.deliveryDetails ? `${order.deliveryDetails.street}, ${order.deliveryDetails.number} - ${order.deliveryDetails.neighborhood}` : 'Endereço cadastrado';
+
+            // Dados Financeiros
+            const rawTotal = order?.total || (order as any)?.total_amount || 0;
+            const formatTotal = typeof rawTotal === 'number'
+                ? rawTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+                : 'R$ 0,00';
+
+            // Mapeamento de Pagamento para Português
+            let payment = order?.paymentMethod || (order as any)?.payment_method || 'A confirmar';
+            if (payment === 'CREDIT' || payment === 'credit_card') payment = 'Cartão de Crédito';
+            if (payment === 'DEBIT' || payment === 'debit_card') payment = 'Cartão de Débito';
+            if (payment === 'CASH' || payment === 'cash' || payment === 'money') payment = 'Dinheiro';
+            if (payment === 'PIX' || payment === 'pix') payment = 'PIX';
+            if (payment === 'PENDING') payment = 'A cobrar na entrega';
+
+            // Nome da Loja (Segurança: fallback garantido)
+            const nomeLoja = storeSettings?.name || selectedUnit?.name || 'O Restaurante';
+
+            let text = '';
+            if (triggerType === 'PREPARING') {
+                const l1 = `*${nomeLoja}* informa: %0A*${nome}* seu pedido começou a ser preparado! 🔥`;
+                const l2 = `Assim que sair para entrega eu te aviso!`;
+                text = l1 + "%0A%0A" + l2;
+            } else if (triggerType === 'DELIVERY') {
+                const enderecoCompleto = order?.deliveryDetails
+                    ? `${order.deliveryDetails.street || 'Rua'}, ${order.deliveryDetails.number || 'S/N'} - ${order.deliveryDetails.neighborhood || 'Bairro'}`
+                    : 'Retirada / Balcão';
+
+                const financeiro = `R$ ${formatTotal} (${payment})`;
+
+                const linhas = [
+                    `*${nomeLoja}* informa:`,
+                    `*${nome}* seu pedido saiu para entrega! 🛵`,
+                    "",
+                    `📦 *Resumo:* ${itens}`,
+                    `📍 *Indo para:* ${enderecoCompleto}`,
+                    `💰 *Total:* ${financeiro}`,
+                    "",
+                    "Fique de olho na campainha!"
+                ];
+
+                text = linhas.join('\n');
+            }
+
+            if (text) {
+                setWhatsappToast({
+                    phone: phone.replace(/\D/g, ''),
+                    message: encodeURIComponent(text),
+                    customerName: nome
+                });
+            }
+        } catch (e) {
+            console.error('Error triggering WhatsApp notification:', e);
+            // Regra de Ouro: Em caso de erro ao montar texto, loga e continua normal, evita tela branca
+        }
+    };
+
     // --- Printer Configuration Handler ---
     useEffect(() => {
         if (!tenantId) return;
@@ -819,7 +894,19 @@ export default function Dashboard() {
         try {
             const { error } = await supabase.from('orders').update({ status }).eq('id', orderId);
             if (error) throw error;
-            setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
+            setOrders(prev => {
+                const updatedOrders = prev.map(o => o.id === orderId ? { ...o, status } : o);
+
+                // Dispara notificação se mudou para PREPARING
+                if (status === 'PREPARING') {
+                    const changedOrder = updatedOrders.find(o => o.id === orderId);
+                    if (changedOrder) {
+                        triggerWhatsAppNotification(changedOrder, 'PREPARING');
+                    }
+                }
+
+                return updatedOrders;
+            });
         } catch (err) { console.error('Error updating status:', err); }
     };
 
@@ -922,7 +1009,17 @@ export default function Dashboard() {
         try {
             const { error } = await supabase.from('orders').update({ driver_id: driverId }).eq('id', orderId);
             if (error) throw error;
-            setOrders(prev => prev.map(o => o.id === orderId ? { ...o, assignedDriverId: driverId } : o));
+            setOrders(prev => {
+                const updatedOrders = prev.map(o => o.id === orderId ? { ...o, assignedDriverId: driverId } : o);
+
+                // Dispara notificação pois "MOTOBOY ATRIBUÍDO" = Saiu para entrega
+                const changedOrder = updatedOrders.find(o => o.id === orderId);
+                if (changedOrder && changedOrder.type === 'DELIVERY') {
+                    triggerWhatsAppNotification(changedOrder, 'DELIVERY');
+                }
+
+                return updatedOrders;
+            });
         } catch (err: any) {
             console.error('Error assigning driver:', err);
             alert('Erro ao atribuir motoboy: ' + (err.message || 'Erro desconhecido'));
@@ -1651,6 +1748,43 @@ export default function Dashboard() {
                     </span>
                 </div>
                 <div className="p-4 md:p-6 lg:p-8 min-h-full animate-in fade-in slide-in-from-right-4 duration-500">{renderContent()}</div>
+
+                {/* WhatsApp Notification Toast */}
+                {whatsappToast && (
+                    <div className="fixed bottom-4 right-4 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300">
+                        <div className="bg-white border text-slate-800 border-green-200 shadow-xl rounded-2xl p-4 w-80 max-w-[calc(100vw-2rem)]">
+                            <div className="flex justify-between items-start mb-2">
+                                <h4 className="font-bold text-sm text-green-800">Notificar {whatsappToast.customerName}?</h4>
+                                <button
+                                    onClick={() => setWhatsappToast(null)}
+                                    className="text-slate-400 hover:text-slate-600 transition-colors"
+                                >
+                                    <Menu className="w-4 h-4" /> {/* Close Icon Equivalent for now, or X */}
+                                </button>
+                            </div>
+                            <p className="text-xs text-slate-500 mb-3 line-clamp-2 italic">
+                                "{decodeURIComponent(whatsappToast.message)}"
+                            </p>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => setWhatsappToast(null)}
+                                    className="flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+                                >
+                                    Ignorar
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        window.open(`https://api.whatsapp.com/send?phone=55${whatsappToast.phone}&text=${whatsappToast.message}`, '_blank', 'noopener,noreferrer');
+                                        setWhatsappToast(null);
+                                    }}
+                                    className="flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-[#25D366] text-white hover:bg-[#1dad52] transition-colors shadow-sm shadow-green-500/30 flex items-center justify-center gap-1"
+                                >
+                                    📲 Enviar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </main>
         </div>
     );
