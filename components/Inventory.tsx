@@ -42,7 +42,7 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, 
     const [newProdAllowObs, setNewProdAllowObs] = useState(true);
 
     useEffect(() => {
-        if (categorias.length > 0 && !produtoEmEdicao && !newProdCategory) {
+        if (categorias.length > 0 && !produtoEmEdicao && (newProdCategory === 'BURGER' || !newProdCategory)) {
             setNewProdCategory(categorias[0].id);
         }
     }, [categorias, produtoEmEdicao, newProdCategory]);

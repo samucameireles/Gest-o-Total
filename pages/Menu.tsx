@@ -177,6 +177,8 @@ export default function Menu() {
           setDeliveryType("PICKUP");
         } else if (tenantData.settings?.menu?.allowedOrderTypes === "DELIVERY") {
           setDeliveryType("DELIVERY");
+        } else if (tenantData.settings?.menu?.allowedOrderTypes === "VIEW_ONLY") {
+          setDeliveryType("PICKUP"); // Doesn't matter much but set a default
         } else {
           setDeliveryType("DELIVERY"); // Default to Delivery if BOTH or undefined for better UX initially
         }
@@ -441,12 +443,24 @@ export default function Menu() {
   });
 
   // Group products by category
-  const productsByCategory = categorias
+  const categorizedProducts = categorias
     .map((cat) => ({
       ...cat,
       products: filteredProducts.filter((p) => p.category === cat.id),
     }))
     .filter((cat) => cat.products.length > 0);
+
+  // Catch products without a valid category
+  const unclassifiedProducts = filteredProducts.filter(
+    (p) => !categorias.some((cat) => cat.id === p.category)
+  );
+
+  const productsByCategory = [
+    ...categorizedProducts,
+    ...(unclassifiedProducts.length > 0
+      ? [{ id: "unclassified", label: "Outros", products: unclassifiedProducts }]
+      : []),
+  ];
 
   const handleSubmitOrder = async () => {
     if (!tenant) return;
@@ -853,7 +867,7 @@ export default function Menu() {
             >
               Todos
             </button>
-            {categorias.map((cat) => (
+            {productsByCategory.map((cat) => (
               <button
                 key={cat.id}
                 onClick={() => {
@@ -891,7 +905,7 @@ export default function Menu() {
               >
                 <p className="font-bold text-sm">Todos</p>
               </button>
-              {categorias.map((cat) => (
+              {productsByCategory.map((cat) => (
                 <button
                   key={cat.id}
                   onClick={() => {
@@ -961,7 +975,7 @@ export default function Menu() {
                                     <span className="text-[9px] font-bold text-red-700 bg-red-50 px-1.5 py-0.5 rounded border border-red-100">Falta: {getStockStatus(product).missingItem}</span>
                                   </div>
                                 )}
-                                {qty > 0 && (
+                                {!isViewOnly && qty > 0 && (
                                   <div className="absolute top-2 right-2 bg-theme text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center shadow-md border-2 border-white">
                                     {qty}
                                   </div>
@@ -1009,7 +1023,7 @@ export default function Menu() {
                                   <span className="font-bold text-theme">
                                     R$ {product.price.toFixed(2)}
                                   </span>
-                                  {qty > 0 && (
+                                  {!isViewOnly && qty > 0 && (
                                     <span className="text-theme text-[11px] font-bold px-2 py-0.5 rounded-full bg-theme-light border border-theme flex items-center gap-1">
                                       <CheckCircle size={10} /> {qty} no carrinho
                                     </span>

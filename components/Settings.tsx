@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { StoreSettings, Coupon, PrinterSettings } from '../types';
-import { Save, Store, Image as ImageIcon, Tag, Trash2, Plus, Users, Shield, Eye, Link2, Copy, Check, Globe, ToggleLeft, ToggleRight, Sun, Printer, Wifi, FileText } from 'lucide-react';
+import { Save, Store, Image as ImageIcon, Tag, Trash2, Plus, Users, Shield, Eye, Link2, Copy, Check, Globe, ToggleLeft, ToggleRight, Sun, Printer, Wifi, FileText, QrCode, Download, Smartphone, LayoutGrid, Search } from 'lucide-react';
+import { QRCodeCanvas } from 'qrcode.react';
 import { supabase } from '../lib/supabase';
 import { useParams } from 'react-router-dom';
 import { LogoUploader } from './LogoUploader';
@@ -126,13 +127,24 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
     }
   };
 
-  const menuLink = slug ? `${window.location.origin}/menu/${slug}` : '';
+  const baseOrigin = window.location.origin;
+  const menuLink = slug ? `${baseOrigin}/menu/${slug}` : '';
 
   const handleCopyLink = () => {
     if (!menuLink) return;
     navigator.clipboard.writeText(menuLink);
     setSlugCopied(true);
     setTimeout(() => setSlugCopied(false), 2000);
+  };
+
+  const handleDownloadQR = () => {
+    const canvas = document.getElementById('qr-code-canvas') as HTMLCanvasElement;
+    if (!canvas) return;
+    const url = canvas.toDataURL("image/png");
+    const link = document.createElement('a');
+    link.download = `qrcode-${slug || 'cardapio'}.png`;
+    link.href = url;
+    link.click();
   };
 
   const handleSave = () => { onUpdateSettings({ name, logoUrl: logo, themeColor, address, googleMapsUrl, operatingHours, menu: { openingTime, closingTime, forceClose, minimumOrder, estimatedDeliveryTime, allowedOrderTypes } }); alert('Salvo!'); };
@@ -429,12 +441,44 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
               </div>
 
               {slug && (
-                <div className="flex items-center gap-2 bg-slate-50 rounded-xl border border-slate-200 px-3 py-2 mb-4 overflow-hidden">
-                  <span className="flex-1 text-xs text-slate-600 font-mono truncate">{window.location.origin}/menu/{slug}</span>
-                  <button onClick={handleCopyLink} title="Copiar link"
-                    className={`p-1.5 rounded-lg transition-all ${slugCopied ? 'bg-emerald-100 text-emerald-600' : 'bg-white border border-slate-200 text-slate-500 hover:text-accent'}`}>
-                    {slugCopied ? <Check size={14} /> : <Copy size={14} />}
-                  </button>
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 bg-slate-50 rounded-xl border border-slate-200 px-3 py-2 overflow-hidden">
+                    <span className="flex-1 text-xs text-slate-600 font-mono truncate">{menuLink}</span>
+                    <button onClick={handleCopyLink} title="Copiar link"
+                      className={`p-1.5 rounded-lg transition-all ${slugCopied ? 'bg-emerald-100 text-emerald-600' : 'bg-white border border-slate-200 text-slate-500 hover:text-accent'}`}>
+                      {slugCopied ? <Check size={14} /> : <Copy size={14} />}
+                    </button>
+                  </div>
+
+                  <div className="bg-slate-50 rounded-2xl border border-slate-200 p-6 flex flex-col items-center gap-4">
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
+                      <QRCodeCanvas
+                        id="qr-code-canvas"
+                        value={menuLink}
+                        size={160}
+                        level="H"
+                        includeMargin={false}
+                        imageSettings={logo ? {
+                          src: logo,
+                          x: undefined,
+                          y: undefined,
+                          height: 30,
+                          width: 30,
+                          excavate: true,
+                        } : undefined}
+                      />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-bold text-slate-700">QR Code do Cardápio</p>
+                      <p className="text-[10px] text-slate-500 mb-4">Imprima e coloque nas mesas</p>
+                      <button
+                        onClick={handleDownloadQR}
+                        className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-accent transition-all shadow-sm"
+                      >
+                        <Download size={14} /> Baixar QR Code
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -505,6 +549,33 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1">Tempo Estimado</label>
                   <input type="text" placeholder="Ex: 40-50 min" value={estimatedDeliveryTime} onChange={e => setEstimatedDeliveryTime(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none focus:border-accent" />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-bold text-slate-500 mb-3 uppercase tracking-wider">Tipo de Operação do Cardápio</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {[
+                      { id: 'DELIVERY', label: '1 - Apenas Entrega', icon: <Smartphone size={18} /> },
+                      { id: 'PICKUP', label: '2 - Apenas Retirada', icon: <Store size={18} /> },
+                      { id: 'BOTH', label: '3 - Entrega e Retirada', icon: <LayoutGrid size={18} /> },
+                      { id: 'VIEW_ONLY', label: '4 - Apenas Visualização', icon: <Search size={18} /> },
+                    ].map((type) => (
+                      <button
+                        key={type.id}
+                        type="button"
+                        onClick={() => setAllowedOrderTypes(type.id as any)}
+                        className={`flex items-center gap-3 p-4 rounded-2xl border-2 transition-all ${allowedOrderTypes === type.id
+                          ? 'border-accent bg-orange-50 text-accent ring-2 ring-orange-100 shadow-highlight'
+                          : 'border-slate-100 bg-white text-slate-500 hover:border-slate-200 hover:bg-slate-50'
+                          }`}
+                      >
+                        <div className={`${allowedOrderTypes === type.id ? 'text-accent' : 'text-slate-400'}`}>
+                          {type.icon}
+                        </div>
+                        <span className="font-bold text-sm whitespace-nowrap">{type.label}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
