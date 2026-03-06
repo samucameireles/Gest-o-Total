@@ -127,7 +127,14 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
     }
   };
 
-  const baseOrigin = window.location.origin;
+  const [baseOrigin, setBaseOrigin] = useState(window.location.origin);
+
+  useEffect(() => {
+    // Se estivermos em localhost, mas o usuário já tiver um domínio da Vercel, 
+    // poderíamos até permitir configurar, mas por padrão usamos o origin atual.
+    setBaseOrigin(window.location.origin);
+  }, []);
+
   const menuLink = slug ? `${baseOrigin}/menu/${slug}` : '';
 
   const handleCopyLink = () => {
@@ -470,10 +477,19 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
                     </div>
                     <div className="text-center">
                       <p className="text-sm font-bold text-slate-700">QR Code do Cardápio</p>
-                      <p className="text-[10px] text-slate-500 mb-4">Imprima e coloque nas mesas</p>
+                      <p className="text-[10px] text-slate-500 mb-2">Imprima e coloque nas mesas</p>
+
+                      {baseOrigin.includes('localhost') && (
+                        <div className="mb-3 px-2 py-1 bg-amber-50 border border-amber-200 rounded-lg">
+                          <p className="text-[9px] text-amber-600 leading-tight">
+                            ⚠️ <b>Atenção:</b> Você está no Localhost. O QR Code abaixo funcionará apenas neste computador. Na Vercel, ele será gerado automaticamente com o link correto.
+                          </p>
+                        </div>
+                      )}
+
                       <button
                         onClick={handleDownloadQR}
-                        className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-accent transition-all shadow-sm"
+                        className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-accent transition-all shadow-sm mx-auto"
                       >
                         <Download size={14} /> Baixar QR Code
                       </button>
