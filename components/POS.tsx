@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, Minus, Trash2, CreditCard, Banknote, Smartphone, CheckCircle, ShoppingCart, X, ShoppingBag, MapPin, Store, ChefHat, UserSearch, UserPlus, Tag, Loader2 } from 'lucide-react';
+import { Search, Plus, Minus, Trash2, CreditCard, Banknote, Smartphone, CheckCircle, ShoppingCart, X, ShoppingBag, MapPin, Store, ChefHat, UserSearch, UserPlus, Tag, Loader2, Printer } from 'lucide-react';
 import { Product, CartItem, Category, PaymentMethod, OrderType, Ingredient, DeliveryDetails, Customer, Order, Coupon, AddOn, NeighborhoodFee, SelectedAddOn } from '../types';
 import { RECIPES } from '../constants';
 import { supabase } from '../lib/supabase';
@@ -138,6 +138,7 @@ export const POS: React.FC<POSProps> = ({
       setDineInName('');
       setDeliveryForm({ customerName: '', phone: '', street: '', number: '', complement: '', neighborhood: '' });
       setSelectedCustomer(null);
+      setCustomerSearch('');
     }
   };
 
@@ -389,6 +390,7 @@ export const POS: React.FC<POSProps> = ({
     if (selectedTabToPay) {
       onPayOrder(selectedTabToPay.id, paymentMethod, discountAmount, paymentMethod === 'CASH' ? parsedReceived : undefined, paymentMethod === 'CASH' ? changeAmount : undefined);
       setSelectedTabToPay(null); setShowCheckout(false); setAppliedCoupon(null); setCouponCode(''); setReceivedAmountStr('');
+      setCustomerSearch(''); setSelectedCustomer(null);
       return;
     }
     if (cart.length === 0) return;
@@ -425,6 +427,9 @@ export const POS: React.FC<POSProps> = ({
       deliveryFee,
       editingOrderId
     );
+
+    setCustomerSearch('');
+    setSelectedCustomer(null);
 
     // After sending to kitchen, go back to open tabs view
     if (sendToKitchenOnly) {
@@ -547,8 +552,15 @@ export const POS: React.FC<POSProps> = ({
                               Editar
                             </button>
                             <button
+                              onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('printOrder', { detail: { order: tab } })); }}
+                              className="text-xs font-bold bg-white text-gray-700 px-2 py-1 rounded shadow-sm hover:bg-gray-100 flex items-center gap-1 border border-border"
+                              title="Imprimir Cupom"
+                            >
+                              <Printer size={12} />
+                            </button>
+                            <button
                               onClick={() => { setSelectedTabToPay(tab); setShowCheckout(true); }}
-                              className="text-[10px] text-accent font-bold uppercase bg-accent/10 px-2 py-1 rounded"
+                              className="text-[10px] text-accent font-bold uppercase bg-accent/10 px-2 py-1 rounded border border-transparent"
                             >
                               Pagar
                             </button>
@@ -619,7 +631,7 @@ export const POS: React.FC<POSProps> = ({
                     <div className="flex items-center gap-2 mb-1 text-accent font-bold text-xs uppercase tracking-wider"><UserSearch size={12} /> Cliente (Obrigatório)</div>
                     {!isNewCustomer ? (
                       <>
-                        <input className="w-full bg-background border border-border rounded p-2 text-xs outline-none focus:border-accent" placeholder="Buscar Cliente (Nome/Tel)..." value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} />
+                        <input className="w-full bg-background border border-border rounded p-2 text-xs outline-none focus:border-accent" placeholder="Buscar Cliente (Nome/Tel)..." value={customerSearch} onChange={e => { setCustomerSearch(e.target.value); if (selectedCustomer) setSelectedCustomer(null); }} />
                         {customerSearch && !selectedCustomer && (
                           <div className="absolute top-full left-0 w-full bg-white border border-border rounded-lg shadow-lg z-10 max-h-40 overflow-y-auto mt-1">
                             {customers.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.phone.includes(customerSearch)).map(c => (
@@ -753,7 +765,7 @@ export const POS: React.FC<POSProps> = ({
                 {!selectedTabToPay ? (
                   orderType === 'DINE_IN' ? (
                     <div className="flex gap-2">
-                      <button onClick={() => setShowCheckout(false)} className="flex-1 bg-white border border-border font-bold rounded-xl text-sm" disabled={isPlacingOrder}>Voltar</button>
+                      <button onClick={() => { setShowCheckout(false); setCustomerSearch(''); setSelectedCustomer(null); }} className="flex-1 bg-white border border-border font-bold rounded-xl text-sm" disabled={isPlacingOrder}>Voltar</button>
                       <button
                         onClick={() => processOrder(true)}
                         disabled={isPlacingOrder}
@@ -765,7 +777,7 @@ export const POS: React.FC<POSProps> = ({
                     </div>
                   ) : (
                     <div className="flex gap-2">
-                      <button onClick={() => setShowCheckout(false)} className="flex-1 bg-white border border-border font-bold rounded-xl text-sm" disabled={isPlacingOrder}>Voltar</button>
+                      <button onClick={() => { setShowCheckout(false); setCustomerSearch(''); setSelectedCustomer(null); }} className="flex-1 bg-white border border-border font-bold rounded-xl text-sm" disabled={isPlacingOrder}>Voltar</button>
                       <button
                         onClick={() => processOrder(false)}
                         disabled={isPlacingOrder || (paymentMethod === 'CASH' && (parseFloat(receivedAmountStr) || 0) < finalTotal) || (orderType === 'DELIVERY' && isAreaServed === false)}
@@ -778,7 +790,7 @@ export const POS: React.FC<POSProps> = ({
                   )
                 ) : (
                   <div className="flex gap-2">
-                    <button onClick={() => { setShowCheckout(false); setSelectedTabToPay(null); }} className="flex-1 bg-white border border-border font-bold rounded-xl text-sm">Voltar</button>
+                    <button onClick={() => { setShowCheckout(false); setSelectedTabToPay(null); setCustomerSearch(''); setSelectedCustomer(null); }} className="flex-1 bg-white border border-border font-bold rounded-xl text-sm">Voltar</button>
                     <button
                       onClick={() => processOrder(false)}
                       disabled={paymentMethod === 'CASH' && (parseFloat(receivedAmountStr) || 0) < finalTotal}
@@ -813,7 +825,7 @@ export const POS: React.FC<POSProps> = ({
               {selectedProduct.category !== 'DRINK' && (
                 <div>
                   <p className="text-xs font-bold text-textSecondary uppercase mb-2">Adicionais</p>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     {addOns
                       .filter(addon => {
                         if (selectedProduct.category === 'BURGER') return true; // Show ALL for Burgers

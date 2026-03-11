@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Bike, Plus, Trash2, Map, Save, X, Phone, User, DollarSign, Package, Calendar, Loader2, Check, Pencil } from 'lucide-react';
+import { Bike, Plus, Trash2, Map, Save, X, Phone, User, DollarSign, Package, Calendar, Loader2, Check, Pencil, Printer } from 'lucide-react';
 import { Driver, NeighborhoodFee, Order, DailyHistory } from '../types';
 
 import { supabase } from '../lib/supabase';
@@ -817,9 +817,16 @@ export const Motoboys: React.FC<MotoboysProps> = ({ drivers, onAddDriver, onRemo
 
             </div>
 
-            <div className="p-4 border-t border-border bg-background">
-              <button onClick={() => setSelectedOrder(null)} className="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-3 rounded-xl transition-colors">
+            <div className="p-4 border-t border-border bg-background flex gap-2">
+              <button onClick={() => setSelectedOrder(null)} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-3 rounded-xl transition-colors">
                 Fechar Detalhes
+              </button>
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent('printOrder', { detail: { order: selectedOrder } }))}
+                className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold px-4 py-3 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2"
+                title="Imprimir Cupom"
+              >
+                <Printer size={18} /> Imprimir
               </button>
             </div>
           </div>

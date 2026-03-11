@@ -243,25 +243,12 @@ export class PrinterService {
         if (!isDelivery && !settings.print_counter_sales) return;
 
         try {
-            const receiptBytes = await this.generateReceipt(order, settings, storeSettings);
-            const headers: Record<string, string> = { 'Content-Type': 'application/octet-stream' };
-            let bodyData: any = new Blob([receiptBytes.buffer] as any, { type: 'application/octet-stream' });
-
-            if (settings.connection_type === 'LOCAL') {
-                headers['x-printer-name'] = settings.local_printer_name || '';
-                headers['x-encoding'] = 'base64';
-                // Converte Uint8Array para Base64 string (mais estável para LOCAL)
-                const binary = String.fromCharCode.apply(null, Array.from(receiptBytes));
-                bodyData = btoa(binary);
-                headers['Content-Type'] = 'text/plain';
-            }
-
-            await fetch(`http://${settings.ip_address}:${settings.port}`, {
-                method: 'POST',
-                mode: 'cors',
-                headers,
-                body: bodyData
+            // Em vez de fetch local (que causa CORS no Vercel), disparamos um evento
+            // para que a UI receba e dispare window.print() no componente oculto.
+            const event = new CustomEvent('printOrder', {
+                detail: { order, settings, storeSettings }
             });
+            window.dispatchEvent(event);
             return true;
         } catch (e) {
             console.error('Print Error:', e);
@@ -270,74 +257,7 @@ export class PrinterService {
     }
 
     static async testConnection(settings: PrinterSettings, storeSettings?: StoreSettings) {
-        const encoder = new TextEncoder();
-        const ESC = [0x1B];
-        const CENTER = new Uint8Array([...ESC, 0x61, 0x01]);
-        const RESET = new Uint8Array([...ESC, 0x40]);
-        const CUT = new Uint8Array([...ESC, 0x69]);
-        const FONT_A = new Uint8Array([...ESC, 0x4D, 0x00]);
-        const FONT_B = new Uint8Array([...ESC, 0x4D, 0x01]);
-        const LINE_SPACE_STD = new Uint8Array([...ESC, 0x32]);
-
-        const isCompact = settings.font_type === 'COMPACT';
-        const forceUpper = settings.force_uppercase !== false;
-
-        const chunks: Uint8Array[] = [RESET, LINE_SPACE_STD];
-
-        // --- Logotipo no Teste ---
-        if (settings.print_logo && storeSettings?.logoUrl) {
-            try {
-                const logoBytes = await this.rasterizeLogo(storeSettings.logoUrl, settings.paper_size === '80mm' ? 384 : 256);
-                if (logoBytes) {
-                    chunks.push(CENTER);
-                    chunks.push(logoBytes);
-                    chunks.push(encoder.encode('\r\n'));
-                }
-            } catch (err) {
-                console.error('Test Logo Error:', err);
-            }
-        }
-
-        const testText = '\r\n--- TESTE DE IMPRESSAO ---\r\nFONTE: ' +
-            (isCompact ? 'COMPACTA (B)' : 'PADRAO (A)') +
-            '\r\nCAIXA ALTA: ' + (forceUpper ? 'SIM' : 'NAO') +
-            '\r\nLOGOTIPO: ' + (settings.print_logo ? 'SIM' : 'NAO') +
-            '\r\n\r\nAbcdefghijklmnopqrstuvwxyz\r\n0123456789\r\n\r\n\r\n\r\n\r\n';
-
-        const body = encoder.encode(this.cleanText(testText, forceUpper).replace(/\n/g, '\r\n'));
-        const fontCmd = isCompact ? FONT_B : FONT_A;
-
-        chunks.push(fontCmd);
-        chunks.push(body);
-        chunks.push(CUT);
-
-        const totalLength = chunks.reduce((acc, curr) => acc + curr.length, 0);
-        const combined = new Uint8Array(totalLength);
-        let offset = 0;
-        chunks.forEach(c => { combined.set(c, offset); offset += c.length; });
-
-        try {
-            const headers: Record<string, string> = { 'Content-Type': 'application/octet-stream' };
-            let bodyData: any = new Blob([combined.buffer] as any, { type: 'application/octet-stream' });
-
-            if (settings.connection_type === 'LOCAL') {
-                headers['x-printer-name'] = settings.local_printer_name || '';
-                headers['x-encoding'] = 'base64';
-                const binary = String.fromCharCode.apply(null, Array.from(combined));
-                bodyData = btoa(binary);
-                headers['Content-Type'] = 'text/plain';
-            }
-
-            await fetch(`http://${settings.ip_address}:${settings.port}`, {
-                method: 'POST',
-                mode: 'cors',
-                headers,
-                body: bodyData
-            });
-            return true;
-        } catch (e) {
-            console.error('Test Connection Error:', e);
-            throw e;
-        }
+        alert("A impressão agora é gerenciada de forma nativa pelo navegador. Teste a impressão através de um pedido real.");
+        return true;
     }
 }

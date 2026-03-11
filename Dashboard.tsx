@@ -15,6 +15,7 @@ import { CashFlow } from './components/CashFlow';
 import { Order, CartItem, OrderType, PaymentMethod, Ingredient, OrderStatus, Driver, Product, NeighborhoodFee, DeliveryDetails, StoreSettings, Unit, Customer, Coupon, WasteLog, AddOn, CashRegisterSession, CashTransaction, DailyHistory, PrinterSettings } from './types';
 import { INITIAL_INVENTORY, RECIPES, DRIVERS, PRODUCTS, INITIAL_ADDONS } from './constants';
 import { PrinterService } from './services/PrinterService';
+import { HiddenReceipt } from './components/HiddenReceipt';
 
 import { useTheme } from './contexts/ThemeContext';
 import { useAuth } from './contexts/AuthContext';
@@ -90,6 +91,9 @@ export default function Dashboard() {
     const [printerSettings, setPrinterSettings] = useState<PrinterSettings | null>(null);
     const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
     const printedOrdersRef = React.useRef<Set<string>>(new Set());
+
+    // --- Web Print State ---
+    const [printingOrder, setPrintingOrder] = useState<Order | null>(null);
 
     // --- WhatsApp Notification State ---
     const [whatsappToast, setWhatsappToast] = useState<{
@@ -174,7 +178,22 @@ export default function Dashboard() {
         });
     }, [tenantId]);
 
+    // --- Web Print Event Listener ---
+    useEffect(() => {
+        const handlePrint = (e: any) => {
+            const { order } = e.detail;
+            setPrintingOrder(order);
+            // Give React a tick to render the print DOM, then invoke print
+            setTimeout(() => {
+                window.print();
+                // Clean up after print dialog closes
+                setTimeout(() => setPrintingOrder(null), 1000);
+            }, 100);
+        };
 
+        window.addEventListener('printOrder', handlePrint);
+        return () => window.removeEventListener('printOrder', handlePrint);
+    }, []);
 
     // --- Entity Management (Hoisted for Effects) ---
     const handleFetchOrderDetails = React.useCallback(async (displayId: number): Promise<Order | null> => {
@@ -1785,6 +1804,13 @@ export default function Dashboard() {
                         </div>
                     </div>
                 )}
+
+                {/* COMPONENTE DE IMPRESSÃO (INVISÍVEL NA TELA, VISÍVEL NO PRINT) */}
+                <div id="print-root" className="hidden print:block absolute inset-0 bg-white z-[9999] text-black">
+                    {printingOrder && (
+                        <HiddenReceipt order={printingOrder} settings={printerSettings} storeSettings={storeSettings} />
+                    )}
+                </div>
             </main>
         </div>
     );

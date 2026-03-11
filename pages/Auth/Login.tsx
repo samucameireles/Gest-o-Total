@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { Link, useNavigate } from 'react-router-dom';
 import { ChefHat, Lock, Mail, Loader2, Sun, Moon, Eye, EyeOff } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
-const logo = '/fotos/gestaototal.png';
+// Logos renderizadas no corpo do componente
 
 export default function Login() {
     const [email, setEmail] = useState('');
@@ -60,12 +60,9 @@ export default function Login() {
                     : 'bg-white/90 backdrop-blur-md border-slate-100 shadow-slate-200'
                     }`}>
                     <div className="text-center mb-10">
-                        <div className={`w-32 h-32 rounded-3xl flex items-center justify-center mx-auto mb-6 transition-all duration-500 border overflow-hidden ${isDark
-                            ? 'bg-gradient-to-br from-blue-600 to-indigo-600 shadow-[0_0_20px_rgba(37,99,235,0.3)] border-white/10'
-                            : 'bg-blue-600 shadow-lg shadow-blue-200 border-blue-500'
-                            }`}>
-                            <img src={logo} alt="GestãoTotal Logo" className="w-full h-full object-cover" />
-                        </div>
+                        {/* Logos Alternativas para Light e Dark Mode */}
+                        <img src="/fotos/gestaototalwhite.png" alt="Gestão Total" className={`h-16 sm:h-20 w-auto mx-auto mb-8 object-contain ${isDark ? 'hidden' : 'block'}`} />
+                        <img src="/fotos/gestaototaldark.png" alt="Gestão Total" className={`h-16 sm:h-20 w-auto mx-auto mb-8 object-contain ${isDark ? 'block' : 'hidden'}`} />
                         <h1 className={`text-3xl font-extrabold tracking-tight mb-2 ${isDark ? 'text-white' : 'text-slate-800'}`}>
                             Gestão<span className="bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">Total</span>
                         </h1>

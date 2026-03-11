@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Clock, CheckCircle, Check, ArrowRight } from 'lucide-react';
+import { Clock, CheckCircle, Check, ArrowRight, Printer } from 'lucide-react';
 import { Order, OrderStatus } from '../types';
 
 interface KitchenProps {
@@ -100,12 +100,21 @@ export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitc
                   ))}
                 </div>
 
-                <button
-                  onClick={() => onUpdateStatus(order.id, 'READY')}
-                  className="w-full bg-success hover:bg-green-600 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-95"
-                >
-                  <CheckCircle size={18} /> PRONTO
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => onUpdateStatus(order.id, 'READY')}
+                    className="flex-1 bg-success hover:bg-green-600 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-95"
+                  >
+                    <CheckCircle size={18} /> PRONTO
+                  </button>
+                  <button
+                    onClick={() => window.dispatchEvent(new CustomEvent('printOrder', { detail: { order } }))}
+                    className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-3 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-95"
+                    title="Imprimir Cupom"
+                  >
+                    <Printer size={18} /> IMPRIMIR
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -178,12 +187,21 @@ export const Kitchen: React.FC<KitchenProps> = ({ orders, onUpdateStatus, onKitc
               </div>
 
               {/* V10: Kitchen Dismiss ONLY */}
-              <button
-                onClick={() => onKitchenDismiss(order.id)}
-                className="w-full bg-textPrimary hover:bg-black text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-95"
-              >
-                <Check size={18} /> CONCLUIR
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => onKitchenDismiss(order.id)}
+                  className="flex-1 bg-textPrimary hover:bg-black text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-95"
+                >
+                  <Check size={18} /> CONCLUIR
+                </button>
+                <button
+                  onClick={() => window.dispatchEvent(new CustomEvent('printOrder', { detail: { order } }))}
+                  className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-3 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-95"
+                  title="Imprimir Cupom"
+                >
+                  <Printer size={18} /> IMPRIMIR
+                </button>
+              </div>
             </div>
           ))}
           {readyOrders.length === 0 && (

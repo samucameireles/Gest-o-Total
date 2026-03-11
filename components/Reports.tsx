@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { DollarSign, ShoppingBag, TrendingUp, Archive, Clock, Store, X, MapPin } from 'lucide-react';
+import { DollarSign, ShoppingBag, TrendingUp, Archive, Clock, Store, X, MapPin, Printer } from 'lucide-react';
 import { Order, DailyHistory } from '../types';
 
 interface ReportsProps {
@@ -295,7 +295,10 @@ export const Reports: React.FC<ReportsProps> = ({ orders, dailyHistory = [] }) =
           <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="p-6 border-b border-border bg-background flex justify-between items-center">
               <h3 className="text-xl font-heading font-extrabold text-textPrimary">Detalhes do Pedido #{selectedOrder.displayId}</h3>
-              <button onClick={() => setSelectedOrder(null)} className="p-2 hover:bg-gray-200 rounded-full"><X size={20} /></button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => window.dispatchEvent(new CustomEvent('printOrder', { detail: { order: selectedOrder } }))} className="p-2 hover:bg-gray-200 rounded-full text-textSecondary hover:text-textPrimary" title="Imprimir Cupom"><Printer size={20} /></button>
+                <button onClick={() => setSelectedOrder(null)} className="p-2 hover:bg-gray-200 rounded-full text-textSecondary hover:text-textPrimary"><X size={20} /></button>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
 

@@ -1242,7 +1242,7 @@ export default function Menu() {
                           Escolha as opções que preferir
                         </p>
                       </div>
-                      <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
                         {addOns
                           .filter((a) =>
                             selectedProduct.allowedAddOns?.includes(a.id),

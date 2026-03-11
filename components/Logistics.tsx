@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Truck, MapPin, Check, User, Bike, ChevronRight, Archive, CheckCircle } from 'lucide-react';
+import { Truck, MapPin, Check, User, Bike, ChevronRight, Archive, CheckCircle, Printer } from 'lucide-react';
 import { Order, Driver, OrderStatus } from '../types';
 
 interface LogisticsProps {
@@ -93,12 +93,21 @@ export const Logistics: React.FC<LogisticsProps> = ({ orders, drivers, onAssignD
                 </div>
               )}
 
-              <button
-                onClick={() => setSelectedOrderForAssignment(order.id)}
-                className="w-full bg-textPrimary hover:bg-black text-white font-bold py-3 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 group"
-              >
-                Chamar Motoboy <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setSelectedOrderForAssignment(order.id)}
+                  className="flex-1 bg-textPrimary hover:bg-black text-white font-bold py-3 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 group"
+                >
+                  Chamar Motoboy <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
+                </button>
+                <button
+                  onClick={() => window.dispatchEvent(new CustomEvent('printOrder', { detail: { order } }))}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold px-4 py-3 rounded-xl transition-all shadow-lg flex items-center justify-center"
+                  title="Imprimir Cupom"
+                >
+                  <Printer size={18} />
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -146,21 +155,30 @@ export const Logistics: React.FC<LogisticsProps> = ({ orders, drivers, onAssignD
                   </div>
                 </div>
 
-                {isDelivered ? (
+                <div className="flex gap-2 mt-4">
+                  {isDelivered ? (
+                    <button
+                      onClick={() => onUpdateStatus(order.id, 'ARCHIVED')}
+                      className="flex-1 bg-gray-800 hover:bg-black text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2"
+                    >
+                      <Archive size={18} /> Arquivar
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => onUpdateStatus(order.id, 'DELIVERED')}
+                      className="flex-1 bg-success hover:bg-green-600 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-green-500/20 flex items-center justify-center gap-2"
+                    >
+                      <Check size={18} /> Confirmar
+                    </button>
+                  )}
                   <button
-                    onClick={() => onUpdateStatus(order.id, 'ARCHIVED')}
-                    className="w-full bg-gray-800 hover:bg-black text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2 mt-4"
+                    onClick={() => window.dispatchEvent(new CustomEvent('printOrder', { detail: { order } }))}
+                    className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold px-4 py-3 rounded-xl transition-all shadow-lg flex items-center justify-center"
+                    title="Imprimir Cupom"
                   >
-                    <Archive size={18} /> Arquivar
+                    <Printer size={18} />
                   </button>
-                ) : (
-                  <button
-                    onClick={() => onUpdateStatus(order.id, 'DELIVERED')}
-                    className="w-full bg-success hover:bg-green-600 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-green-500/20 flex items-center justify-center gap-2 mt-4"
-                  >
-                    <Check size={18} /> Confirmar Entrega
-                  </button>
-                )}
+                </div>
               </div>
             );
           })}
