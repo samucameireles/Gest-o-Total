@@ -16,14 +16,15 @@ interface InventoryProps {
     products: Product[];
     onLogWaste: (ingredientId: string, amount: number, reason: string) => void;
     wasteLogs: WasteLog[];
-    // V12: AddOns Props
     addOns: AddOn[];
     onAddAddOn: (name: string, price: number, applyToAll?: boolean, ingredientId?: string) => void;
     onRemoveAddOn: (id: string) => void;
     categorias: { id: string, label: string }[];
+    inventoryControlEnabled?: boolean;
+    onToggleInventoryControl?: (enabled: boolean) => void;
 }
 
-export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, onUpdateIngredientName, onAddIngredient, onRemoveIngredient, onAddProduct, onRemoveProduct, onUpdateProduct, products, onLogWaste, wasteLogs, addOns, onAddAddOn, onRemoveAddOn, categorias }) => {
+export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, onUpdateIngredientName, onAddIngredient, onRemoveIngredient, onAddProduct, onRemoveProduct, onUpdateProduct, products, onLogWaste, wasteLogs, addOns, onAddAddOn, onRemoveAddOn, categorias, inventoryControlEnabled = true, onToggleInventoryControl }) => {
     const [view, setView] = useState<'STOCK' | 'MENU' | 'WASTE' | 'ADDONS'>('STOCK');
     const [filter, setFilter] = useState('');
 
@@ -218,6 +219,22 @@ export const Inventory: React.FC<InventoryProps> = ({ inventory, onUpdateStock, 
 
             {view === 'STOCK' && (
                 <>
+                    {/* Toggle Controle de Estoque */}
+                    <div className="p-6 border-b border-border bg-slate-50 flex items-center justify-between">
+                        <div>
+                            <h3 className="font-bold text-textPrimary text-sm">Controle de Estoque Automático</h3>
+                            <p className="text-xs text-textSecondary mt-1 max-w-xl">
+                                Quando desativado, o sistema não bloqueará vendas de produtos sem estoque e não descontará os insumos ao finalizar os pedidos. As quantidades poderão ficar negativas.
+                            </p>
+                        </div>
+                        <button
+                            onClick={() => onToggleInventoryControl?.(!inventoryControlEnabled)}
+                            className={`w-14 h-8 rounded-full transition-colors flex items-center px-1 shrink-0 ${inventoryControlEnabled ? 'bg-blue-500 justify-end' : 'bg-slate-300 justify-start'}`}
+                        >
+                            <div className="w-6 h-6 rounded-full bg-white shadow-sm" />
+                        </button>
+                    </div>
+
                     <div className="p-6 border-b border-border bg-white flex gap-2 items-center">
                         <input value={newIngName} onChange={e => setNewIngName(e.target.value)} placeholder="Novo Insumo" className="flex-[2] bg-background border border-border rounded-xl px-4 py-3 outline-none focus:border-accent" />
                         <select value={newIngUnit} onChange={e => setNewIngUnit(e.target.value)} className="flex-1 bg-background border border-border rounded-xl px-4 py-3 outline-none focus:border-accent"><option value="un">Unidade</option><option value="kg">KG</option><option value="L">Litro</option><option value="fatia">Fatia</option></select>

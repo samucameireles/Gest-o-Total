@@ -10,120 +10,102 @@ interface HiddenReceiptProps {
 export const HiddenReceipt: React.FC<HiddenReceiptProps> = ({ order, settings, storeSettings }) => {
     if (!order) return null;
 
-    // Usa 80mm como padrão se não configurado
-    const paperWidth = settings?.paper_size === '58mm' ? 'w-[58mm]' : 'w-[80mm]';
+    const separator = <div className="text-center w-full leading-none my-1 select-none overflow-hidden">------------------------------------------</div>;
 
     return (
-        <div className={`${paperWidth} mx-auto bg-white text-black p-0 m-0 font-mono text-xs leading-snug`}>
+        <div className="w-full mx-auto bg-white text-black p-0 m-0 font-mono text-[14pt] leading-tight flex flex-col items-center">
             {/* CABEÇALHO */}
-            <div className="text-center mb-4">
+            <div className="text-center w-full mb-1">
                 {storeSettings?.logoUrl && settings?.print_logo && (
-                    <img src={storeSettings.logoUrl} alt="Logo" className="w-16 h-16 mx-auto mb-2 grayscale" />
+                    <img src={storeSettings.logoUrl} alt="Logo" className="w-16 h-16 mx-auto mb-1 grayscale" />
                 )}
-                <h1 className="font-bold text-lg uppercase">{storeSettings?.name || 'ESTABELECIMENTO'}</h1>
+                <h1 className="font-bold text-[16pt] uppercase m-0 p-0 leading-none">{storeSettings?.name || 'ESTABELECIMENTO'}</h1>
                 {storeSettings?.address && (
-                    <p className="text-[10px] break-words">{storeSettings.address}</p>
+                    <p className="text-[12pt] break-words m-0 p-0 mt-1">{storeSettings.address}</p>
                 )}
-                <div className="border-b border-black border-dashed my-2"></div>
-                <h2 className="font-bold text-xl uppercase">PEDIDO DE {order.type === 'DELIVERY' ? 'DELIVERY' : 'BALCÃO'}</h2>
-                <div className="border-b border-black border-dashed my-2"></div>
+                {separator}
+                <h2 className="font-bold text-[15pt] uppercase m-0 p-0">PEDIDO DE {order.type === 'DELIVERY' ? 'DELIVERY' : 'BALCÃO'}</h2>
+                {separator}
             </div>
 
             {/* DADOS DO PEDIDO */}
-            <div className="mb-4">
-                <p><strong>ID:</strong> #{order.displayId}</p>
-                <p><strong>DATA:</strong> {new Date(order.createdAt).toLocaleString('pt-BR')}</p>
-                {order.customerName && <p><strong>CLIENTE:</strong> {order.customerName}</p>}
-                {order.tableName && <p><strong>MESA:</strong> {order.tableName}</p>}
+            <div className="text-center w-full mb-1">
+                <p className="m-0 p-0 uppercase"><strong>ID:</strong> #{order.displayId}</p>
+                <p className="m-0 p-0 uppercase"><strong>DATA:</strong> {new Date(order.createdAt).toLocaleString('pt-BR')}</p>
+                {order.customerName && <p className="m-0 p-0 uppercase"><strong>CLIENTE:</strong> {order.customerName}</p>}
+                {order.tableName && <p className="m-0 p-0 uppercase"><strong>MESA:</strong> {order.tableName}</p>}
             </div>
 
-            <div className="border-b border-black border-dashed my-2"></div>
+            {separator}
 
             {/* ITENS */}
-            <table className="w-full text-left mb-4">
-                <thead>
-                    <tr className="border-b border-black">
-                        <th className="py-1">QTD/ITEM</th>
-                        <th className="py-1 text-right">TOTAL</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {order.items.map((item, idx) => {
-                        const addOnsTotal = item.selectedAddOns?.reduce((sum, a) => sum + (a.price * a.quantity), 0) || 0;
-                        const itemTotal = (item.price + addOnsTotal) * item.quantity;
-                        return (
-                            <React.Fragment key={idx}>
-                                <tr>
-                                    <td className="py-1 whitespace-pre-wrap break-words pr-2">
-                                        {item.quantity}UN {item.name}
-                                    </td>
-                                    <td className="py-1 text-right font-bold align-top whitespace-nowrap">
-                                        {itemTotal.toFixed(2)}
-                                    </td>
-                                </tr>
-                                {item.notes && (
-                                    <tr>
-                                        <td colSpan={2} className="text-[10px] pb-1 pl-4">* {item.notes}</td>
-                                    </tr>
-                                )}
-                                {item.selectedAddOns && item.selectedAddOns.map((addon, aIdx) => (
-                                    <tr key={aIdx}>
-                                        <td colSpan={2} className="text-[10px] pb-1 pl-4">+ {addon.quantity}UN {addon.name}</td>
-                                    </tr>
-                                ))}
-                            </React.Fragment>
-                        );
-                    })}
-                </tbody>
-            </table>
+            <div className="w-full text-left mb-1">
+                {order.items.map((item, idx) => {
+                    const addOnsTotal = item.selectedAddOns?.reduce((sum, a) => sum + (a.price * a.quantity), 0) || 0;
+                    const itemTotal = (item.price + addOnsTotal) * item.quantity;
+                    return (
+                        <div key={idx} className="mb-3 w-full">
+                            <div className="flex justify-between items-start w-full text-[13pt] leading-tight">
+                                <div className="flex-1 pr-2 uppercase">
+                                    <strong>{item.quantity}UN</strong> {item.name}
+                                </div>
+                                <div className="font-bold whitespace-nowrap">
+                                    {itemTotal.toFixed(2)}
+                                </div>
+                            </div>
 
-            <div className="border-b border-black border-dashed my-2"></div>
+                            {item.notes && (
+                                <div className="pl-6 text-[12pt] leading-tight uppercase font-medium mt-[2px]">
+                                    * {item.notes}
+                                </div>
+                            )}
 
-            {/* TOTAIS */}
-            <div className="space-y-1 mb-4">
-                {(order.deliveryFee > 0 || order.discount > 0) && (
-                    <>
-                        <div className="flex justify-between">
-                            <span>SUBTOTAL</span>
-                            <span>R$ {(order.total - (order.deliveryFee || 0) + (order.discount || 0)).toFixed(2)}</span>
+                            {item.selectedAddOns && item.selectedAddOns.map((addon, aIdx) => (
+                                <div key={aIdx} className="pl-6 text-[12pt] leading-tight uppercase font-medium mt-[2px]">
+                                    + {addon.quantity}UN {addon.name}
+                                </div>
+                            ))}
                         </div>
-                        {order.deliveryFee > 0 && (
-                            <div className="flex justify-between">
-                                <span>TAXA ENTREGA</span>
-                                <span>R$ {order.deliveryFee.toFixed(2)}</span>
-                            </div>
-                        )}
-                        {order.discount > 0 && (
-                            <div className="flex justify-between">
-                                <span>DESCONTO</span>
-                                <span>- R$ {order.discount.toFixed(2)}</span>
-                            </div>
-                        )}
-                        <div className="border-b border-black border-dashed my-1"></div>
-                    </>
-                )}
-                <div className="flex justify-between font-bold text-sm">
-                    <span>TOTAL</span>
-                    <span>R$ {order.total.toFixed(2)}</span>
-                </div>
+                    );
+                })}
             </div>
 
-            <div className="border-b border-black border-dashed my-2"></div>
+            {separator}
+
+            {/* TOTAIS */}
+            <div className="w-full text-right mb-1">
+                {(order.deliveryFee > 0 || order.discount > 0) && (
+                    <>
+                        <p className="m-0 p-0 text-[14pt]">SUBTOTAL: R$ {(order.total - (order.deliveryFee || 0) + (order.discount || 0)).toFixed(2)}</p>
+                        {order.deliveryFee > 0 && (
+                            <p className="m-0 p-0 text-[14pt]">TAXA ENTREGA: R$ {order.deliveryFee.toFixed(2)}</p>
+                        )}
+                        {order.discount > 0 && (
+                            <p className="m-0 p-0 text-[14pt]">DESCONTO: - R$ {order.discount.toFixed(2)}</p>
+                        )}
+                        {separator}
+                    </>
+                )}
+                <p className="m-0 p-0 font-bold text-[16pt] uppercase mt-1">TOTAL: R$ {order.total.toFixed(2)}</p>
+            </div>
+
+            {separator}
 
             {/* ENTREGA */}
             {order.type === 'DELIVERY' && order.deliveryDetails && (
-                <div className="mt-4 break-words">
-                    <h3 className="font-bold uppercase text-center mb-2">ENTREGA:</h3>
-                    <p>{order.deliveryDetails.street}, {order.deliveryDetails.number}</p>
-                    {order.deliveryDetails.complement && <p>COMPL.: {order.deliveryDetails.complement}</p>}
-                    <p>{order.deliveryDetails.neighborhood}</p>
-                    <p>TEL: {order.deliveryDetails.phone}</p>
+                <div className="mt-1 w-full text-center break-words">
+                    <h3 className="font-bold uppercase mb-1 m-0 p-0 text-[15pt]">DADOS DE ENTREGA</h3>
+                    <p className="m-0 p-0 uppercase">{order.deliveryDetails.street}, {order.deliveryDetails.number}</p>
+                    {order.deliveryDetails.complement && <p className="m-0 p-0 uppercase">COMPL.: {order.deliveryDetails.complement}</p>}
+                    <p className="m-0 p-0 uppercase">{order.deliveryDetails.neighborhood}</p>
+                    <p className="m-0 p-0 mt-1 font-bold uppercase">TEL: {order.deliveryDetails.phone}</p>
+                    {separator}
                 </div>
             )}
 
             {/* RODA PÉ / CORTE */}
-            <div className="mt-8 text-center text-[10px] text-gray-500">
-                - - - - - - - - - - - - - - - - -
+            <div className="mt-2 text-center text-[12pt] text-black pb-4 uppercase w-full">
+                *** OBRIGADO PELA PREFERÊNCIA! ***
             </div>
         </div>
     );

@@ -44,12 +44,13 @@ interface POSProps {
   isPlacingOrder?: boolean;
   editingOrderId: string | null;
   setEditingOrderId: React.Dispatch<React.SetStateAction<string | null>>;
+  inventoryControlEnabled?: boolean;
 }
 
 export const POS: React.FC<POSProps> = ({
   products, onPlaceOrder, onPayOrder, inventory, customers, onAddCustomer, activeOrders, coupons, addOns, categorias, onAddCategory, onUpdateCategory, onDeleteCategory, onUpdateFee, onRemoveFee, neighborhoodFees,
   cart, setCart, orderType, setOrderType, paymentMethod, setPaymentMethod, deliveryForm, setDeliveryForm, dineInName, setDineInName, selectedCustomer, setSelectedCustomer, appliedCoupon, setAppliedCoupon, showCheckout, setShowCheckout,
-  receivedAmountStr, setReceivedAmountStr, isPlacingOrder, editingOrderId, setEditingOrderId
+  receivedAmountStr, setReceivedAmountStr, isPlacingOrder, editingOrderId, setEditingOrderId, inventoryControlEnabled = true
 }) => {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
@@ -144,6 +145,8 @@ export const POS: React.FC<POSProps> = ({
 
   // Logic to identify missing ingredients
   const checkStockStatus = (product: Product): { available: boolean, missingItem?: string } => {
+    if (!inventoryControlEnabled) return { available: true };
+
     let recipe = product.recipe;
     if (!recipe || recipe.length === 0) {
       recipe = RECIPES[product.id];
@@ -241,11 +244,13 @@ export const POS: React.FC<POSProps> = ({
     }
 
     // 4. Validação contra o Estoque Físico
-    for (const [ingId, qtyNeeded] of Object.entries(demanda)) {
-      const ing = inventory.find(i => i.id === ingId);
-      if (ing && ing.currentStock < qtyNeeded) {
-        alert(`Estoque insuficiente de: ${ing.name}!\nNecessário: ${qtyNeeded} ${ing.unit}.\nDisponível: ${ing.currentStock} ${ing.unit}.\nPor favor, reabasteça o estoque ou reduza o pedido.`);
-        return; // Interrompe: não adiciona ao carrinho
+    if (inventoryControlEnabled) {
+      for (const [ingId, qtyNeeded] of Object.entries(demanda)) {
+        const ing = inventory.find(i => i.id === ingId);
+        if (ing && ing.currentStock < qtyNeeded) {
+          alert(`Estoque insuficiente de: ${ing.name}!\nNecessário: ${qtyNeeded} ${ing.unit}.\nDisponível: ${ing.currentStock} ${ing.unit}.\nPor favor, reabasteça o estoque ou reduza o pedido.`);
+          return; // Interrompe: não adiciona ao carrinho
+        }
       }
     }
     // -------------------------------------------------------------------
@@ -329,6 +334,8 @@ export const POS: React.FC<POSProps> = ({
   };
 
   const checkCartStock = (currentCart: CartItem[]): { ok: boolean, error?: string } => {
+    if (!inventoryControlEnabled) return { ok: true };
+
     // 1. Aggregate total ingredients needed
     const needed: Record<string, number> = {};
 

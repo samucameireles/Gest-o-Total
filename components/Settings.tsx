@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 import { useParams } from 'react-router-dom';
 import { LogoUploader } from './LogoUploader';
 import { PrinterService } from '../services/PrinterService';
+import { PrintSettingsTab } from './PrintSettingsTab';
 
 interface SettingsProps {
   settings: StoreSettings;
@@ -795,6 +796,8 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onUpdateSettings, 
                 </button>
               </div>
             </div>
+
+            <PrintSettingsTab tenantId={tenantId} />
 
             <div className={`p-6 rounded-3xl border border-blue-100 bg-blue-50/50 flex gap-4 items-start`}>
               <div className="p-2 bg-blue-500 rounded-lg text-white"><Shield size={18} /></div>

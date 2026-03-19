@@ -141,6 +141,7 @@ export interface StoreSettings {
     estimatedDeliveryTime: string;
     allowedOrderTypes?: 'DELIVERY' | 'PICKUP' | 'BOTH' | 'VIEW_ONLY';
   };
+  inventoryControlEnabled?: boolean;
 }
 
 export interface Coupon {

@@ -40,7 +40,8 @@ export default function Dashboard() {
                     address: s.address,
                     googleMapsUrl: s.googleMapsUrl,
                     operatingHours: s.operatingHours
-                }
+                },
+                inventory_control_enabled: s.inventoryControlEnabled
             }).eq('id', selectedUnit.id);
             if (error) throw error;
             setStoreSettings(s);
@@ -863,10 +864,12 @@ export default function Dashboard() {
                 }
             });
 
-            for (const [ingId, amount] of Object.entries(deducoesEstoque)) {
-                const ing = inventory.find(i => i.id === ingId);
-                if (ing) {
-                    await handleUpdateStock(ingId, ing.currentStock - amount);
+            if (storeSettings.inventoryControlEnabled !== false) {
+                for (const [ingId, amount] of Object.entries(deducoesEstoque)) {
+                    const ing = inventory.find(i => i.id === ingId);
+                    if (ing) {
+                        await handleUpdateStock(ingId, ing.currentStock - amount);
+                    }
                 }
             }
 
@@ -1582,6 +1585,7 @@ export default function Dashboard() {
                     isPlacingOrder={isPlacingOrder}
                     editingOrderId={editingOrderId}
                     setEditingOrderId={setEditingOrderId}
+                    inventoryControlEnabled={storeSettings.inventoryControlEnabled ?? true}
                 />;
             case 'kitchen':
                 return <Kitchen orders={orders} onUpdateStatus={handleUpdateStatus} onKitchenDismiss={handleKitchenDismiss} onBulkPrepareToReady={handleBulkPrepareToReady} onBulkKitchenDismiss={handleBulkKitchenDismiss} />;
@@ -1590,7 +1594,7 @@ export default function Dashboard() {
             case 'motoboys':
                 return <Motoboys drivers={drivers} onAddDriver={handleAddDriver} onRemoveDriver={handleRemoveDriver} neighborhoodFees={neighborhoodFees} onUpdateFee={handleUpdateFee} onRemoveFee={handleRemoveFee} orders={orders} dailyHistory={dailyHistory} onFetchOrderDetails={handleFetchOrderDetails} onBulkImportFees={handleBulkImportFees} />;
             case 'inventory':
-                return <Inventory inventory={inventory} onUpdateStock={handleUpdateStock} onUpdateIngredientName={handleUpdateIngredientName} onAddIngredient={handleAddIngredient} onRemoveIngredient={handleRemoveIngredient} onAddProduct={handleAddProduct} onRemoveProduct={handleRemoveProduct} onUpdateProduct={handleUpdateProduct} products={products} onLogWaste={handleLogWaste} wasteLogs={wasteLogs} addOns={addOns} onAddAddOn={handleAddAddOn} onRemoveAddOn={handleRemoveAddOn} categorias={categorias} />;
+                return <Inventory inventory={inventory} onUpdateStock={handleUpdateStock} onUpdateIngredientName={handleUpdateIngredientName} onAddIngredient={handleAddIngredient} onRemoveIngredient={handleRemoveIngredient} onAddProduct={handleAddProduct} onRemoveProduct={handleRemoveProduct} onUpdateProduct={handleUpdateProduct} products={products} onLogWaste={handleLogWaste} wasteLogs={wasteLogs} addOns={addOns} onAddAddOn={handleAddAddOn} onRemoveAddOn={handleRemoveAddOn} categorias={categorias} inventoryControlEnabled={storeSettings.inventoryControlEnabled ?? true} onToggleInventoryControl={(enabled) => handleUpdateSettings({ ...storeSettings, inventoryControlEnabled: enabled })} />;
             case 'crm':
                 return <CRM customers={customers} onAddCustomer={handleAddCustomer} onUpdateCustomer={handleUpdateCustomer} onRemoveCustomer={handleRemoveCustomer} />;
             case 'reports':
@@ -1698,7 +1702,7 @@ export default function Dashboard() {
                     }
 
                     // Fetch Settings from Tenant
-                    const { data: tenantInfo } = await supabase.from('tenants').select('settings, logo_url, logo_path, theme_color').eq('id', tenantId).single();
+                    const { data: tenantInfo } = await supabase.from('tenants').select('settings, logo_url, logo_path, theme_color, inventory_control_enabled').eq('id', tenantId).single();
                     if (tenantInfo) {
                         setStoreSettings({
                             name: data.name,
@@ -1708,7 +1712,8 @@ export default function Dashboard() {
                             menu: tenantInfo.settings?.menu,
                             address: tenantInfo.settings?.address,
                             googleMapsUrl: tenantInfo.settings?.googleMapsUrl,
-                            operatingHours: tenantInfo.settings?.operatingHours
+                            operatingHours: tenantInfo.settings?.operatingHours,
+                            inventoryControlEnabled: tenantInfo.inventory_control_enabled ?? true
                         });
                     }
 
